@@ -1,17 +1,57 @@
 """Delete everything tagged janitor-demo=true (and janitor backups) — run after the demo."""
 import argparse
 import json
+import time
 
 import boto3
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 TAG_FILTER = [{"Name": "tag:janitor-demo", "Values": ["true"]}]
+
+# Injectable so tests can avoid actually sleeping.
+_sleep = time.sleep
+
+TARGET_GROUP_DELETE_ATTEMPTS = 12
+TARGET_GROUP_DELETE_RETRY_SECONDS = 5
+
+
+def delete_target_group_with_retry(
+    elb,
+    arn: str,
+    attempts: int = TARGET_GROUP_DELETE_ATTEMPTS,
+    delay: float = TARGET_GROUP_DELETE_RETRY_SECONDS,
+) -> None:
+    """Delete a target group, retrying on ResourceInUse.
+
+    On real AWS, a target group's listener can take a few seconds to
+    disappear after its load balancer is deleted; deleting the target
+    group before that happens raises ResourceInUseException. Retry with
+    a delay for that specific error and re-raise anything else immediately.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            elb.delete_target_group(TargetGroupArn=arn)
+            return
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code != "ResourceInUse" or attempt == attempts:
+                raise
+            _sleep(delay)
 
 
 def cleanup(region: str) -> dict[str, list[str]]:
     ec2 = boto3.client("ec2", region_name=region)
     elb = boto3.client("elbv2", region_name=region)
-    done = {"load_balancers": [], "target_groups": [], "instances": [], "eips": [], "snapshots": [], "volumes": []}
+    done = {
+        "load_balancers": [],
+        "target_groups": [],
+        "instances": [],
+        "eips": [],
+        "snapshots": [],
+        "volumes": [],
+        "failed": [],
+    }
 
     def is_demo(arn):
         tags = elb.describe_tags(ResourceArns=[arn])["TagDescriptions"][0]["Tags"]
@@ -25,8 +65,12 @@ def cleanup(region: str) -> dict[str, list[str]]:
         elb.get_waiter("load_balancers_deleted").wait(LoadBalancerArns=lbs)
     for tg in elb.describe_target_groups()["TargetGroups"]:
         if is_demo(tg["TargetGroupArn"]):
-            elb.delete_target_group(TargetGroupArn=tg["TargetGroupArn"])
-            done["target_groups"].append(tg["TargetGroupArn"])
+            arn = tg["TargetGroupArn"]
+            try:
+                delete_target_group_with_retry(elb, arn)
+                done["target_groups"].append(arn)
+            except ClientError as e:
+                done["failed"].append(f"{arn}: {e}")
 
     iids = [i["InstanceId"] for r in ec2.describe_instances(Filters=TAG_FILTER)["Reservations"] for i in r["Instances"]
             if i["State"]["Name"] != "terminated"]
