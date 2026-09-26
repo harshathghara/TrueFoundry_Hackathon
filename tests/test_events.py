@@ -51,7 +51,17 @@ def test_estimate_and_blast_radius_become_resource_updates():
     assert est[-1] == {"type": "resources", "items": [{"id": "vol-1", "kind": "ebs", "monthly_cost": 4.0}]}
     br = n.feed({"type": "tool.response", "id": "r2", "tool_call_id": "c2",
                  "content": json.dumps({"resource_id": "vol-9", "safe": False, "reasons": ["tagged env=prod"], "warnings": []})}, idx)
-    assert br[-1] == {"type": "resources", "items": [{"id": "vol-9", "blast_radius": "tagged env=prod"}]}
+    assert br[-1] == {"type": "resources", "items": [{"id": "vol-9", "blast_radius": "tagged env=prod", "blast_warnings": []}]}
+
+
+def test_blast_radius_warnings_carried_to_resource():
+    n, idx = Normalizer(), {}
+    idx["m1"] = _msg("m1", [("c1", "check_blast_radius", {"resource_id": "arn-1"})])
+    out = n.feed({"type": "tool.response", "id": "r1", "tool_call_id": "c1",
+                  "content": json.dumps({"resource_id": "arn-1", "safe": True, "reasons": [],
+                                          "warnings": ["listener HTTP:80 still configured"]})}, idx)
+    assert out[-1] == {"type": "resources",
+                        "items": [{"id": "arn-1", "blast_radius": "safe", "blast_warnings": ["listener HTTP:80 still configured"]}]}
 
 
 def test_sandbox_tool_classified():
@@ -77,6 +87,17 @@ def test_turn_done_paused_vs_done_vs_error():
     assert n.feed(done, {}) == [{"type": "done", "output": "## Summary"}, {"type": "status", "status": "done"}]
     err = {"type": "turn.done", "id": "d", "state": {"status": "error", "message": "boom"}}
     assert n.feed(err, {}) == [{"type": "status", "status": "error", "message": "boom"}]
+
+
+def test_turn_done_paused_with_non_approval_required_action_emits_message():
+    n = Normalizer()
+    paused = {"type": "turn.done", "id": "d", "state": {"status": "done", "output": None,
+              "required_actions": [{"type": "tool.response_required"}]}}
+    assert n.feed(paused, {}) == [
+        {"type": "message", "id": "needs-input",
+         "content": "The agent is waiting for input it can't get here — open TrueForge at http://localhost:8790 to answer."},
+        {"type": "status", "status": "paused"},
+    ]
 
 
 def test_lifecycle_events():
@@ -106,7 +127,7 @@ def test_blast_radius_reasons_as_string():
     idx["m1"] = _msg("m1", [("c1", "check_blast_radius", {"resource_id": "vol-9"})])
     out = n.feed({"type": "tool.response", "id": "r1", "tool_call_id": "c1",
                   "content": json.dumps({"resource_id": "vol-9", "safe": False, "reasons": "tagged env=prod"})}, idx)
-    assert out[-1] == {"type": "resources", "items": [{"id": "vol-9", "blast_radius": "tagged env=prod"}]}
+    assert out[-1] == {"type": "resources", "items": [{"id": "vol-9", "blast_radius": "tagged env=prod", "blast_warnings": []}]}
 
 
 def test_tool_response_missing_id_does_not_raise():

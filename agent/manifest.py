@@ -19,7 +19,10 @@ def build_agent_manifest(model_fqn: str) -> dict:
         "config": {
             "sandbox": {"enabled": True},
             "generative_ui": {"enabled": False},
-            "ask_user_questions": {"enabled": True},
+            # Turning this on lets the model pause with tool.response_required, which the
+            # dashboard can't answer (only tool.approval_required renders as an approval
+            # card) and /decisions 409s on. Disabled as a spec deviation (ruling: I-3).
+            "ask_user_questions": {"enabled": False},
             "dynamic_sub_agents": {"enabled": False},
             "iteration_limit": 60,
         },

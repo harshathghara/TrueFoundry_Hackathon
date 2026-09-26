@@ -13,6 +13,7 @@ def test_manifest_gates_every_destructive_tool():
     for tool in ["delete_volume", "terminate_instance", "delete_load_balancer", "release_eip", "delete_snapshot"]:
         assert tool in srv["require_approval_for_tools"]
     assert m["config"]["sandbox"]["enabled"] is True
+    assert m["config"]["ask_user_questions"]["enabled"] is False
     assert m["model"]["name"] == "openai/janitor-model"
     assert "Cloud Cost Janitor" in m["instructions"]
 

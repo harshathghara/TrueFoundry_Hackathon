@@ -97,7 +97,8 @@ class Normalizer:
                 label = "; ".join(reasons)
             else:
                 label = "unsafe"
-            out.append({"type": "resources", "items": [{"id": result["resource_id"], "blast_radius": label}]})
+            out.append({"type": "resources", "items": [{"id": result["resource_id"], "blast_radius": label,
+                                                          "blast_warnings": result.get("warnings") or []}]})
         return out
 
     def _approvals(self, event, index):
@@ -112,8 +113,15 @@ class Normalizer:
 
     def _done(self, state):
         status = state.get("status")
-        if status == "done" and state.get("required_actions"):
-            return [{"type": "status", "status": "paused"}]
+        required_actions = state.get("required_actions")
+        if status == "done" and required_actions:
+            out = []
+            if any(ra.get("type") != "tool.approval_required" for ra in required_actions):
+                out.append({"type": "message", "id": "needs-input",
+                            "content": "The agent is waiting for input it can't get here — "
+                                       "open TrueForge at http://localhost:8790 to answer."})
+            out.append({"type": "status", "status": "paused"})
+            return out
         if status == "done":
             raw_output = state.get("output")
             if isinstance(raw_output, dict):
