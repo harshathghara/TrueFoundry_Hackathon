@@ -83,12 +83,19 @@ class SessionRunner:
         self._thread.start()
 
     def _consume(self, input_items: list[dict]) -> None:
+        self._turn_event_ids: list[str] = []
         try:
             stream = self.client.sessions.create_turn_stream(session_id=self.session_id, input=input_items)
             for ev in stream:
                 self._handle(ev)
         except Exception as e:  # noqa: BLE001 — surface any SDK/network failure to the UI
             self._publish({"type": "status", "status": "error", "message": f"{type(e).__name__}: {e}"})
+            return
+        dump = os.getenv("JANITOR_DUMP_EVENTS")
+        if dump:  # capture fully-merged events (deltas folded in) to lock normalizer tests to TrueForge's actual shapes
+            with open(dump, "a", encoding="utf-8") as f:
+                for eid in self._turn_event_ids:
+                    f.write(json.dumps(self._index[eid], default=str) + "\n")
 
     def _handle(self, ev) -> None:
         if getattr(ev, "type", None) == "model.message.delta":
@@ -101,10 +108,7 @@ class SessionRunner:
         else:
             self._objects[ev.id] = ev
             event = _to_dict(ev)
-            dump = os.getenv("JANITOR_DUMP_EVENTS")
-            if dump:  # capture real (non-delta) events to lock normalizer tests to TrueForge's actual shapes
-                with open(dump, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(event, default=str) + "\n")
+            self._turn_event_ids.append(event["id"])
         self._index[event["id"]] = event
         for out in self._normalizer.feed(event, self._index):
             if out["type"] == "approval":

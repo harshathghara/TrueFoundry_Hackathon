@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -84,3 +85,40 @@ def test_decide_raises_when_turn_still_running():
     r._thread = SimpleNamespace(is_alive=lambda: True)
     with pytest.raises(RuntimeError, match="turn still running"):
         r.decide([{"tool_call_id": "c1", "thread_id": "main", "allow": True}])
+
+
+def test_dump_writes_merged_events_at_turn_end(tmp_path, monkeypatch):
+    dump_path = tmp_path / "dump.jsonl"
+    monkeypatch.setenv("JANITOR_DUMP_EVENTS", str(dump_path))
+
+    def fake_merge_event_delta(base, delta):
+        base.tool_calls = delta.tool_calls
+
+    monkeypatch.setattr("trueforge_sdk.events.merge_event_delta", fake_merge_event_delta)
+
+    turn = [
+        Ev(type="turn.created", id="t1"),
+        Ev(type="model.message", id="m1", thread_id="main", content="", tool_calls=[]),
+        Ev(type="model.message.delta", id="m1",
+           tool_calls=[{"id": "c1", "function": {"name": "delete_volume", "arguments": '{"volume_id": "vol-1"}'}}]),
+        Ev(type="turn.done", id="d1", state={"status": "done", "output": None, "required_actions": []}),
+    ]
+
+    class OneTurnSessions:
+        def create(self, agent):
+            return SimpleNamespace(data=SimpleNamespace(id="s1"))
+
+        def create_turn_stream(self, session_id, input):
+            return iter(turn)
+
+    client = SimpleNamespace(sessions=OneTurnSessions())
+    r = SessionRunner(client, "cloud-cost-janitor", loop=None)
+    r.start("clean us-east-1")
+    r.wait(5)
+
+    lines = [json.loads(line) for line in dump_path.read_text(encoding="utf-8").splitlines()]
+    ids = [line["id"] for line in lines]
+    assert ids == ["t1", "m1", "d1"]
+
+    m1 = next(line for line in lines if line["id"] == "m1")
+    assert m1["tool_calls"] == [{"id": "c1", "function": {"name": "delete_volume", "arguments": '{"volume_id": "vol-1"}'}}]
