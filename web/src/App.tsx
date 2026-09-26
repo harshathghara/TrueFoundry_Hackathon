@@ -8,7 +8,7 @@ import { ScanPanel } from './components/ScanPanel'
 import { useSession } from './useSession'
 
 export default function App() {
-  const { state, audit, scan, decide } = useSession()
+  const { state, audit, scan, decide, submitError } = useSession()
   const resources = Object.values(state.resources)
   return (
     <main className="mx-auto max-w-7xl space-y-5 p-4 md:p-8">
@@ -18,7 +18,7 @@ export default function App() {
       </header>
       <ScanPanel status={state.status} error={state.error} onScan={scan} />
       <KpiStrip resources={resources} audit={audit} pending={state.approvals.length} />
-      <ApprovalCards approvals={state.approvals} resources={state.resources} status={state.status} onSubmit={decide} />
+      <ApprovalCards approvals={state.approvals} resources={state.resources} status={state.status} submitError={submitError} onSubmit={decide} />
       <div className="grid gap-5 lg:grid-cols-2">
         <section><h2 className="mb-2 font-semibold">Idle resources</h2><ResourceTable resources={resources} /></section>
         <section><h2 className="mb-2 font-semibold">Agent steps</h2><AgentFeed state={state} /></section>

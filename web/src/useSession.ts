@@ -7,6 +7,7 @@ export function useSession() {
   const [state, dispatch] = useReducer(reduce, initialState)
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [audit, setAudit] = useState<AuditEntry[]>([])
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!sessionId) return
@@ -18,6 +19,7 @@ export function useSession() {
   const scan = useCallback(async (region: string) => {
     dispatch({ type: 'reset' })
     setAudit([])
+    setSubmitError(null)
     dispatch({ type: 'status', status: 'running' })
     try {
       setSessionId((await startScan(region)).session_id)
@@ -31,9 +33,10 @@ export function useSession() {
     try {
       await sendDecisions(sessionId, decisions)
     } catch (e) {
-      dispatch({ type: 'status', status: 'error', message: String(e) })
+      setSubmitError(String(e))
       return false
     }
+    setSubmitError(null)
     const at = new Date().toISOString()
     setAudit((prev) => [
       ...prev,
@@ -46,5 +49,5 @@ export function useSession() {
     return true
   }, [sessionId, state.approvals])
 
-  return { state, audit, scan, decide }
+  return { state, audit, scan, decide, submitError }
 }

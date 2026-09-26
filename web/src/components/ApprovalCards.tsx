@@ -2,8 +2,9 @@ import { useState } from 'react'
 import type { DecisionInput } from '../api'
 import type { Approval, Resource, Status } from '../types'
 
-export function ApprovalCards({ approvals, resources, status, onSubmit }: {
-  approvals: Approval[]; resources: Record<string, Resource>; status: Status; onSubmit: (d: DecisionInput[]) => void
+export function ApprovalCards({ approvals, resources, status, submitError, onSubmit }: {
+  approvals: Approval[]; resources: Record<string, Resource>; status: Status; submitError: string | null
+  onSubmit: (d: DecisionInput[]) => Promise<boolean>
 }) {
   const [choice, setChoice] = useState<Record<string, { allow: boolean; reason: string }>>({})
   if (approvals.length === 0) return null
@@ -33,8 +34,12 @@ export function ApprovalCards({ approvals, resources, status, onSubmit }: {
           </div>
         )
       })}
+      {submitError && <div className="text-sm text-rose-400">Submit failed: {submitError} — check your choices and try again.</div>}
       <button disabled={!canSubmit} className="rounded-lg bg-amber-500 px-4 py-2 font-medium text-slate-950 disabled:opacity-40"
-        onClick={() => onSubmit(approvals.map((a) => ({ tool_call_id: a.tool_call_id, thread_id: a.thread_id, allow: choice[a.tool_call_id].allow, reason: choice[a.tool_call_id].reason || undefined })))}>
+        onClick={async () => {
+          const ok = await onSubmit(approvals.map((a) => ({ tool_call_id: a.tool_call_id, thread_id: a.thread_id, allow: choice[a.tool_call_id].allow, reason: choice[a.tool_call_id].reason || undefined })))
+          if (ok) setChoice({})
+        }}>
         Submit decisions
       </button>
     </div>
