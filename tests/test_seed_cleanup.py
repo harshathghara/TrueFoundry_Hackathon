@@ -18,3 +18,9 @@ def test_seed_creates_detectable_waste_and_cleanup_removes_it(aws, ami_id):
     assert ids["load_balancer"] not in {i["id"] for i in aws_scan.list_idle_load_balancers(REGION)}
     assert ids["eip"] not in {i["id"] for i in aws_scan.list_unassociated_eips(REGION)}
     assert ids["snapshot"] not in {i["id"] for i in aws_scan.list_old_snapshots(REGION, older_than_days=0)}
+
+
+def test_seed_is_rerunnable(aws, ami_id):
+    first = seed(REGION, ami_id=ami_id)
+    second = seed(REGION, ami_id=ami_id)
+    assert first["load_balancer"] != second["load_balancer"]

@@ -17,10 +17,10 @@
       "Sid": "SeedDemoWaste",
       "Effect": "Allow",
       "Action": [
-        "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:CreateTags", "ec2:RunInstances", "ec2:StopInstances",
+        "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:CreateTags", "ec2:RunInstances",
         "ec2:AllocateAddress",
         "elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateTargetGroup",
-        "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags", "elasticloadbalancing:DeleteTargetGroup"
+        "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags"
       ],
       "Resource": "*"
     },
@@ -28,7 +28,8 @@
       "Sid": "DestructiveOnlyOnDemoTag",
       "Effect": "Allow",
       "Action": ["ec2:DeleteVolume", "ec2:DeleteSnapshot", "ec2:TerminateInstances", "ec2:ReleaseAddress",
-                 "elasticloadbalancing:DeleteLoadBalancer"],
+                 "ec2:StopInstances", "elasticloadbalancing:DeleteLoadBalancer",
+                 "elasticloadbalancing:DeleteTargetGroup"],
       "Resource": "*",
       "Condition": {"StringEquals": {"aws:ResourceTag/janitor-demo": "true"}}
     }

@@ -1,6 +1,7 @@
 """Create tagged demo waste: 2 unattached volumes, 1 prod decoy, 1 stopped instance, 1 idle ALB, 1 EIP, 1 snapshot."""
 import argparse
 import json
+import uuid
 
 import boto3
 from dotenv import load_dotenv
@@ -42,9 +43,10 @@ def seed(region: str, ami_id: str | None = None) -> dict:
     ec2.stop_instances(InstanceIds=[iid])
     ec2.get_waiter("instance_stopped").wait(InstanceIds=[iid])
 
-    lb = elb.create_load_balancer(Name="janitor-demo-alb", Subnets=subnet_ids, Type="application", Scheme="internet-facing",
+    suffix = uuid.uuid4().hex[:6]
+    lb = elb.create_load_balancer(Name=f"janitor-demo-alb-{suffix}", Subnets=subnet_ids, Type="application", Scheme="internet-facing",
                                   Tags=[DEMO])["LoadBalancers"][0]
-    tg = elb.create_target_group(Name="janitor-demo-tg", Protocol="HTTP", Port=80, VpcId=vpc, TargetType="instance",
+    tg = elb.create_target_group(Name=f"janitor-demo-tg-{suffix}", Protocol="HTTP", Port=80, VpcId=vpc, TargetType="instance",
                                  Tags=[DEMO])["TargetGroups"][0]
     elb.create_listener(LoadBalancerArn=lb["LoadBalancerArn"], Protocol="HTTP", Port=80,
                         DefaultActions=[{"Type": "forward", "TargetGroupArn": tg["TargetGroupArn"]}])
