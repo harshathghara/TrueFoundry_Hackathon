@@ -34,3 +34,20 @@ def test_scan_decide_audit(monkeypatch):
 def test_unknown_session_404():
     main.RUNNERS.clear()
     assert TestClient(main.app).get("/api/sessions/nope/audit").status_code == 404
+
+
+class BusyRunner(FakeRunner):
+    def decide(self, decisions):
+        raise RuntimeError("turn still running")
+
+
+def test_decide_conflict_returns_409(monkeypatch):
+    monkeypatch.setattr(main, "SessionRunner", BusyRunner)
+    monkeypatch.setattr(main, "get_client", lambda: None)
+    main.RUNNERS.clear()
+    c = TestClient(main.app)
+    c.post("/api/scan", json={"region": "us-east-1"})
+    body = {"decisions": [{"tool_call_id": "c1", "thread_id": "main", "allow": True}]}
+    resp = c.post("/api/sessions/s1/decisions", json=body)
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "turn still running"}

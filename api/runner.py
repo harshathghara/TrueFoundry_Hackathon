@@ -42,7 +42,14 @@ class SessionRunner:
         self._run_turn([{"type": "user.message", "content": prompt}])
         return self.session_id
 
+    def is_busy(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def decide(self, decisions: list[dict]) -> None:
+        if self.is_busy():
+            raise RuntimeError("turn still running")
+        if not self.pending:
+            raise RuntimeError("no pending approvals")
         items = []
         by_call = {p["tool_call_id"]: p for p in self.pending}
         for d in decisions:

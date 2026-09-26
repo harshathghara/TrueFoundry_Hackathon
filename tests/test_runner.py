@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from api.runner import SessionRunner
 
 
@@ -66,3 +68,19 @@ def test_stream_exception_becomes_error_status():
     r.start("x")
     r.wait(5)
     assert r.buffer[-1] == {"type": "status", "status": "error", "message": "RuntimeError: tf down"}
+
+
+def test_decide_raises_when_no_pending_approvals():
+    client = SimpleNamespace(sessions=FakeSessions())
+    r = SessionRunner(client, "cloud-cost-janitor", loop=None)
+    with pytest.raises(RuntimeError, match="no pending approvals"):
+        r.decide([{"tool_call_id": "c1", "thread_id": "main", "allow": True}])
+
+
+def test_decide_raises_when_turn_still_running():
+    client = SimpleNamespace(sessions=FakeSessions())
+    r = SessionRunner(client, "cloud-cost-janitor", loop=None)
+    r.pending = [{"tool_call_id": "c1", "thread_id": "main", "tool": "delete_volume", "resource_id": "vol-1"}]
+    r._thread = SimpleNamespace(is_alive=lambda: True)
+    with pytest.raises(RuntimeError, match="turn still running"):
+        r.decide([{"tool_call_id": "c1", "thread_id": "main", "allow": True}])

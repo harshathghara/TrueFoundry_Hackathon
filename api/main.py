@@ -88,7 +88,10 @@ async def events(session_id: str):
 @app.post("/api/sessions/{session_id}/decisions")
 async def decisions(session_id: str, req: DecisionsRequest):
     runner = _runner(session_id)
-    await run_in_threadpool(runner.decide, [d.model_dump() for d in req.decisions])
+    try:
+        await run_in_threadpool(runner.decide, [d.model_dump() for d in req.decisions])
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 
