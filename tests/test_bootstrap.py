@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from agent.manifest import build_agent_manifest
 from scripts import bootstrap_trueforge as bt
@@ -59,3 +60,20 @@ def test_bootstrap_updates_existing_agent():
            "MCP_PUBLIC_URL": "http://x/mcp", "AGENT_NAME": "cloud-cost-janitor"}
     bt.bootstrap("http://tf", env, http)
     assert ("PUT", "/api/v1/agents/ag1") in calls
+
+
+def test_error_output_redacts_secrets():
+    def handler(req: httpx.Request):
+        if req.method == "PUT" and req.url.path == "/api/v1/settings/model-providers":
+            return httpx.Response(400, json={"error": {"message": "bad key sk-SECRET123 / dk-SECRET456"}})
+        return httpx.Response(200, json={"data": []})
+
+    http = httpx.Client(base_url="http://tf", transport=httpx.MockTransport(handler))
+    env = {"OPENAI_API_KEY": "sk-SECRET123", "OPENAI_MODEL_ID": "gpt-5.2", "DAYTONA_API_KEY": "dk-SECRET456",
+           "MCP_PUBLIC_URL": "http://localhost:8000/mcp", "AGENT_NAME": "cloud-cost-janitor"}
+    with pytest.raises(SystemExit) as excinfo:
+        bt.bootstrap("http://tf", env, http)
+    message = str(excinfo.value)
+    assert "sk-SECRET123" not in message
+    assert "dk-SECRET456" not in message
+    assert "***" in message

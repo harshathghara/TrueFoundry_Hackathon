@@ -29,28 +29,33 @@ def sandbox_body(api_key: str) -> dict:
                          "auto_delete_interval_in_minutes": 7200}}
 
 
-def _check(resp: httpx.Response, what: str) -> httpx.Response:
+def _check(resp: httpx.Response, what: str, secrets: tuple = ()) -> httpx.Response:
     if resp.status_code >= 400:
-        sys.exit(f"{what} failed: HTTP {resp.status_code} {resp.text}\nCompare with {resp.request.url.scheme}://{resp.request.url.host}:{resp.request.url.port}/api/v1/docs")
+        body = resp.text
+        for secret in secrets:
+            if secret:
+                body = body.replace(secret, "***")
+        sys.exit(f"{what} failed: HTTP {resp.status_code} {body}\nCompare with {resp.request.url.scheme}://{resp.request.url.host}:{resp.request.url.port}/api/v1/docs")
     print(f"ok  {what}")
     return resp
 
 
 def bootstrap(base_url: str, env: dict, http: httpx.Client | None = None) -> None:
     http = http or httpx.Client(base_url=base_url, timeout=60)
-    _check(http.put("/api/v1/settings/model-providers", json=model_provider_body(env["OPENAI_API_KEY"], env["OPENAI_MODEL_ID"])), "model provider")
-    _check(http.put("/api/v1/settings/mcp-servers", json=mcp_server_body(env["MCP_PUBLIC_URL"])), "mcp server")
-    _check(http.put("/api/v1/settings/sandbox-providers", json=sandbox_body(env["DAYTONA_API_KEY"])), "sandbox provider")
+    secrets = (env["OPENAI_API_KEY"], env["DAYTONA_API_KEY"])
+    _check(http.put("/api/v1/settings/model-providers", json=model_provider_body(env["OPENAI_API_KEY"], env["OPENAI_MODEL_ID"])), "model provider", secrets)
+    _check(http.put("/api/v1/settings/mcp-servers", json=mcp_server_body(env["MCP_PUBLIC_URL"])), "mcp server", secrets)
+    _check(http.put("/api/v1/settings/sandbox-providers", json=sandbox_body(env["DAYTONA_API_KEY"])), "sandbox provider", secrets)
 
     name = env["AGENT_NAME"]
     manifest = build_agent_manifest(MODEL_FQN)
-    existing = _check(http.get("/api/v1/agents", params={"agent_name": name}), "list agents").json()["data"]
+    existing = _check(http.get("/api/v1/agents", params={"agent_name": name}), "list agents", secrets).json()["data"]
     match = next((a for a in existing if a["name"] == name), None)
     description = "Finds idle AWS resources, prices them, and deletes only what a human approves."
     if match:
-        _check(http.put(f"/api/v1/agents/{match['id']}", json={"description": description, "manifest": manifest}), "update agent")
+        _check(http.put(f"/api/v1/agents/{match['id']}", json={"description": description, "manifest": manifest}), "update agent", secrets)
     else:
-        _check(http.post("/api/v1/agents", json={"name": name, "description": description, "manifest": manifest}), "create agent")
+        _check(http.post("/api/v1/agents", json={"name": name, "description": description, "manifest": manifest}), "create agent", secrets)
 
 
 if __name__ == "__main__":
