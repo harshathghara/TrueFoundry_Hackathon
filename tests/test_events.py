@@ -1,6 +1,11 @@
 import json
+from pathlib import Path
+
+import pytest
 
 from api.events import Normalizer, parse_content, short_tool_name
+
+FIXTURE = Path(__file__).parent / "fixtures" / "real_turn.jsonl"
 
 
 def _msg(mid, calls=(), content=""):
@@ -109,3 +114,18 @@ def test_tool_response_missing_id_does_not_raise():
     idx["m1"] = _msg("m1", [("c1", "list_unattached_volumes", {"region": "us-east-1"})])
     out = n.feed({"type": "tool.response", "tool_call_id": "c1", "content": json.dumps({"items": []})}, idx)
     assert out[0]["id"] is None
+
+
+@pytest.mark.skipif(not FIXTURE.exists(), reason="capture a real stream first (Task 9 Step 9)")
+def test_real_stream_fixture():
+    n, idx, out = Normalizer(), {}, []
+    for line in FIXTURE.read_text(encoding="utf-8").splitlines():
+        ev = json.loads(line)
+        idx[ev["id"]] = ev
+        out += n.feed(ev, idx)
+    approvals = [e for e in out if e["type"] == "approval"]
+    assert approvals, "real stream produced no approval events"
+    assert all(a["tool"] in {"delete_volume", "terminate_instance", "delete_load_balancer", "release_eip", "delete_snapshot"} for a in approvals)
+    assert all(a["resource_id"] for a in approvals)
+    assert any(e["type"] == "resources" and any("monthly_cost" in i for i in e["items"]) for e in out)
+    assert any(e["type"] == "step" and e["kind"] == "sandbox" for e in out)
