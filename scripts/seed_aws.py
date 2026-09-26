@@ -51,8 +51,7 @@ def seed(region: str, ami_id: str | None = None) -> dict:
     elb.create_listener(LoadBalancerArn=lb["LoadBalancerArn"], Protocol="HTTP", Port=80,
                         DefaultActions=[{"Type": "forward", "TargetGroupArn": tg["TargetGroupArn"]}])
 
-    alloc = ec2.allocate_address(Domain="vpc")["AllocationId"]
-    ec2.create_tags(Resources=[alloc], Tags=[DEMO])
+    alloc = ec2.allocate_address(Domain="vpc", TagSpecifications=_spec("elastic-ip"))["AllocationId"]
 
     snap = ec2.create_snapshot(VolumeId=vols[0], Description="janitor-demo stale snapshot",
                                TagSpecifications=_spec("snapshot"))["SnapshotId"]

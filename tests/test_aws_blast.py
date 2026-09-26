@@ -26,6 +26,12 @@ def test_prod_tag_is_unsafe(ec2, az):
     assert out["safe"] is False and any("env=prod" in r for r in out["reasons"])
 
 
+def test_prod_tag_case_insensitive_and_environment_key_is_unsafe(ec2, az):
+    vid = ec2.create_volume(AvailabilityZone=az, Size=8, TagSpecifications=[{"ResourceType": "volume", "Tags": [{"Key": "Environment", "Value": "Production"}]}])["VolumeId"]
+    out = check_blast_radius(vid, REGION)
+    assert out["safe"] is False and any("prod" in r.lower() for r in out["reasons"])
+
+
 def test_termination_protected_instance_is_unsafe(ec2, ami_id):
     # moto 5.2.3 ignores DisableApiTermination passed to run_instances, but honors
     # it via modify_instance_attribute, so set it explicitly after launch.

@@ -9,6 +9,15 @@ def tags_of(tag_list) -> dict:
     return {t["Key"]: t["Value"] for t in tag_list or []}
 
 
+PROD_VALUES = {"prod", "production"}
+PROD_KEYS = {"env", "environment"}
+
+
+def is_prod_tagged(tags: dict) -> bool:
+    lower = {k.lower(): v for k, v in tags.items() if isinstance(v, str)}
+    return any(lower.get(k, "").lower() in PROD_VALUES for k in PROD_KEYS)
+
+
 def _age_days(dt) -> int:
     return (datetime.now(timezone.utc) - dt).days
 

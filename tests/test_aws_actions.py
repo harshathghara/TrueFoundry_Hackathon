@@ -72,3 +72,19 @@ def test_terminate_and_release_and_delete_snapshot(ec2, az, ami_id):
 def test_missing_resource_returns_error_not_exception(ec2):
     out = aws_actions.delete_volume("vol-0000000000000000", REGION)
     assert out["ok"] is False and out["error"]
+
+
+def test_prod_refusal_is_case_insensitive_and_covers_environment_key(ec2, az):
+    vid = _vol(ec2, az, [DEMO_TAG, {"Key": "Environment", "Value": "Production"}])
+    out = aws_actions.delete_volume(vid, REGION)
+    assert out["ok"] is False and "prod" in out["error"]
+    assert ec2.describe_volumes(VolumeIds=[vid])["Volumes"]
+
+
+def test_delete_snapshot_refuses_janitor_backup(ec2, az):
+    vid = _vol(ec2, az, [DEMO_TAG])
+    snap = ec2.create_snapshot(VolumeId=vid, TagSpecifications=[{"ResourceType": "snapshot", "Tags": [
+        DEMO_TAG, {"Key": "janitor-backup", "Value": "true"}]}])["SnapshotId"]
+    out = aws_actions.delete_snapshot(snap, REGION)
+    assert out["ok"] is False and "janitor backup" in out["error"]
+    assert ec2.describe_snapshots(SnapshotIds=[snap])["Snapshots"]

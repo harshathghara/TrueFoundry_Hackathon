@@ -4,7 +4,7 @@ import os
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from mcp_server.aws_scan import tags_of
+from mcp_server.aws_scan import is_prod_tagged, tags_of
 
 
 def _result(action, resource_id, error=None, **extra):
@@ -14,12 +14,9 @@ def _result(action, resource_id, error=None, **extra):
     return out
 
 
-PROD_VALUES = {"prod", "production"}
-
-
 def _tag_violation(tags: dict) -> str | None:
     # Always on, independent of JANITOR_REQUIRE_TAG and of IAM: the tool itself never touches prod.
-    if tags.get("env", "").lower() in PROD_VALUES:
+    if is_prod_tagged(tags):
         return "refused: resource is tagged env=prod"
     required = os.getenv("JANITOR_REQUIRE_TAG", "janitor-demo=true").strip()
     if not required:
@@ -40,11 +37,16 @@ def _dry_run(fn, **kwargs) -> str | None:
     return None
 
 
-def _guarded(action, resource_id, get_tags, do, dry_run=None):
+def _guarded(action, resource_id, get_tags, do, dry_run=None, extra_check=None):
     try:
-        violation = _tag_violation(get_tags())
+        tags = get_tags()
+        violation = _tag_violation(tags)
         if violation:
             return _result(action, resource_id, violation)
+        if extra_check:
+            violation = extra_check(tags)
+            if violation:
+                return _result(action, resource_id, violation)
         if dry_run:
             err = dry_run()
             if err:
@@ -102,6 +104,12 @@ def release_eip(allocation_id: str, region: str) -> dict:
     )
 
 
+def _backup_violation(tags: dict) -> str | None:
+    if tags.get("janitor-backup") == "true":
+        return "refused: snapshot is a janitor backup"
+    return None
+
+
 def delete_snapshot(snapshot_id: str, region: str) -> dict:
     ec2 = boto3.client("ec2", region_name=region)
     return _guarded(
@@ -109,6 +117,7 @@ def delete_snapshot(snapshot_id: str, region: str) -> dict:
         lambda: tags_of(ec2.describe_snapshots(SnapshotIds=[snapshot_id])["Snapshots"][0].get("Tags")),
         lambda: ec2.delete_snapshot(SnapshotId=snapshot_id),
         lambda: _dry_run(ec2.delete_snapshot, SnapshotId=snapshot_id),
+        extra_check=_backup_violation,
     )
 
 

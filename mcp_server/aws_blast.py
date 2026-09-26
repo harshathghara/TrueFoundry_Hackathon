@@ -2,7 +2,7 @@
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from mcp_server.aws_scan import tags_of
+from mcp_server.aws_scan import is_prod_tagged, tags_of
 
 
 def snapshots_used_by_amis(images: list[dict]) -> dict[str, str]:
@@ -26,7 +26,7 @@ def records_aliasing(dns_name: str, records: list[dict]) -> list[str]:
 
 
 def _prod_reason(tags: dict) -> list[str]:
-    return ["tagged env=prod"] if tags.get("env", "").lower() in {"prod", "production"} else []
+    return ["tagged env=prod"] if is_prod_tagged(tags) else []
 
 
 def _volume(ec2, vid):

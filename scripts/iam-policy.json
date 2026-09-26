@@ -17,12 +17,19 @@
       "Sid": "SeedDemoWaste",
       "Effect": "Allow",
       "Action": [
-        "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:CreateTags", "ec2:RunInstances",
+        "ec2:CreateVolume", "ec2:CreateSnapshot", "ec2:RunInstances",
         "ec2:AllocateAddress",
         "elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateTargetGroup",
         "elasticloadbalancing:CreateListener", "elasticloadbalancing:AddTags"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "TagOnlyResourcesWeJustCreated",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateTags"],
+      "Resource": "*",
+      "Condition": {"StringEquals": {"ec2:CreateAction": ["CreateVolume", "RunInstances", "CreateSnapshot", "AllocateAddress"]}}
     },
     {
       "Sid": "DestructiveOnlyOnDemoTag",

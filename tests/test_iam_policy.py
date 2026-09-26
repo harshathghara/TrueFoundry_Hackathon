@@ -22,3 +22,16 @@ def test_destructive_actions_are_all_tag_conditioned():
                 f"Statement {statement.get('Sid')} contains destructive actions {destructive} "
                 f"without the janitor-demo tag condition"
             )
+
+
+def test_create_tags_is_scoped_to_seed_created_resource_types():
+    policy = json.loads(POLICY_PATH.read_text())
+    create_tags_condition = {"StringEquals": {"ec2:CreateAction": ["CreateVolume", "RunInstances", "CreateSnapshot", "AllocateAddress"]}}
+    for statement in policy["Statement"]:
+        actions = statement["Action"]
+        if isinstance(actions, str):
+            actions = [actions]
+        if "ec2:CreateTags" in actions:
+            assert statement.get("Condition") == create_tags_condition, (
+                f"Statement {statement.get('Sid')} grants ec2:CreateTags without the ec2:CreateAction condition"
+            )
