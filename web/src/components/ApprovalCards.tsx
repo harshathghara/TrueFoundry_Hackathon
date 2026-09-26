@@ -34,7 +34,7 @@ export function ApprovalCards({ approvals, resources, status, onSubmit }: {
         )
       })}
       <button disabled={!canSubmit} className="rounded-lg bg-amber-500 px-4 py-2 font-medium text-slate-950 disabled:opacity-40"
-        onClick={() => { onSubmit(approvals.map((a) => ({ tool_call_id: a.tool_call_id, thread_id: a.thread_id, allow: choice[a.tool_call_id].allow, reason: choice[a.tool_call_id].reason || undefined }))); setChoice({}) }}>
+        onClick={() => onSubmit(approvals.map((a) => ({ tool_call_id: a.tool_call_id, thread_id: a.thread_id, allow: choice[a.tool_call_id].allow, reason: choice[a.tool_call_id].reason || undefined })))}>
         Submit decisions
       </button>
     </div>

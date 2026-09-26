@@ -27,7 +27,13 @@ export function useSession() {
   }, [])
 
   const decide = useCallback(async (decisions: DecisionInput[]) => {
-    if (!sessionId) return
+    if (!sessionId) return false
+    try {
+      await sendDecisions(sessionId, decisions)
+    } catch (e) {
+      dispatch({ type: 'status', status: 'error', message: String(e) })
+      return false
+    }
     const at = new Date().toISOString()
     setAudit((prev) => [
       ...prev,
@@ -37,11 +43,7 @@ export function useSession() {
       }),
     ])
     dispatch({ type: 'decided' })
-    try {
-      await sendDecisions(sessionId, decisions)
-    } catch (e) {
-      dispatch({ type: 'status', status: 'error', message: String(e) })
-    }
+    return true
   }, [sessionId, state.approvals])
 
   return { state, audit, scan, decide }

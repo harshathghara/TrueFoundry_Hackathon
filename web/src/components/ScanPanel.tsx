@@ -5,7 +5,17 @@ import type { Status } from '../types'
 export function ScanPanel({ status, error, onScan }: { status: Status; error?: string; onScan: (region: string) => void }) {
   const [region, setRegion] = useState('us-east-1')
   const [health, setHealth] = useState<{ trueforge: boolean; mcp: boolean } | null>(null)
-  useEffect(() => { getHealth().then(setHealth).catch(() => setHealth({ trueforge: false, mcp: false })) }, [])
+  useEffect(() => {
+    let cancelled = false
+    const check = () => {
+      getHealth()
+        .then((h) => { if (!cancelled) setHealth(h) })
+        .catch(() => { if (!cancelled) setHealth({ trueforge: false, mcp: false }) })
+    }
+    check()
+    const id = setInterval(check, 3000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [])
   const ready = health?.trueforge && health?.mcp
   const busy = status === 'running'
   return (
