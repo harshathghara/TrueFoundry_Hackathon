@@ -55,6 +55,7 @@ React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) �
 - Snapshot cost is an upper bound (full volume size; snapshots are incremental).
 - Audit log is in memory; restarting the API loses it.
 - Destructive actions only touch `janitor-demo=true` resources by design; running on real waste means changing `JANITOR_REQUIRE_TAG` deliberately.
+- The MCP server has no auth; it binds to 127.0.0.1 only. Tag and prod rails still apply to any caller.
 
 ## Run it (≈10 minutes)
 Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key, a Daytona key with `write:sandboxes`, `write:snapshots` and `delete:snapshots` (the default quick-start key is not enough).
@@ -64,17 +65,27 @@ cp .env.example .env                                  # fill in keys
 aws iam create-service-linked-role --aws-service-name elasticloadbalancing.amazonaws.com
 aws iam create-user --user-name cost-janitor && aws iam put-user-policy --user-name cost-janitor --policy-name cloud-cost-janitor --policy-document file://scripts/iam-policy.json
 aws iam create-access-key --user-name cost-janitor   # put these keys in .env
+# The admin-only IAM step above uses your admin AWS profile; the app itself only ever
+# reads the cost-janitor keys from .env.
 python -m venv .venv
 source .venv/Scripts/activate                         # Git Bash · PowerShell: .venv\Scripts\Activate.ps1 · macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
-# terminal 1 → http://localhost:8790 (TrueForge blocks localhost MCP URLs unless allowed):
-OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]' npx @truefoundry/trueforge@latest
-#   PowerShell: $env:OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]'; npx @truefoundry/trueforge@latest
-python -m mcp_server.server                            # terminal 2 → http://localhost:8000/mcp
+
+# Terminal 1 (new terminal, repo root) → http://localhost:8790 (TrueForge blocks localhost MCP URLs unless allowed):
+OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]' npx @truefoundry/trueforge@0.2.1
+#   PowerShell: $env:OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]'; npx @truefoundry/trueforge@0.2.1
+
+# Terminal 2 (new terminal, repo root, venv activated) → http://localhost:8000/mcp
+python -m mcp_server.server
+
+# Terminal 3 (new terminal, repo root, venv activated): register the agent and seed demo
+# waste first, then start the API bridge in the same terminal once they finish
 python -m scripts.bootstrap_trueforge                  # registers model, MCP server, sandbox, agent
 python -m scripts.seed_aws                             # creates tagged demo waste (a few minutes)
-uvicorn api.main:app --port 8080                       # terminal 3
-cd web && npm install && npm run dev                   # terminal 4 → http://localhost:5173
+uvicorn api.main:app --port 8080
+
+# Terminal 4 (new terminal, repo root, venv activated) → http://localhost:5173
+cd web && npm install && npm run dev
 ```
 Click **Run janitor** → watch the steps → approve / deny → read the report. Or open http://localhost:8790,
 pick the `cloud-cost-janitor` agent, and ask it to clean up us-east-1.
