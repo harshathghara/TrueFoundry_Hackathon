@@ -1,0 +1,8 @@
+boto3>=1.35
+mcp[cli]>=1.12
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.1
+httpx>=0.27
+python-dotenv>=1.0
+trueforge-sdk
