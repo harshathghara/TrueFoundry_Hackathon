@@ -63,10 +63,13 @@ Exposes AWS as MCP tools over streamable HTTP. Each tool returns JSON-serializab
 | `release_eip(allocation_id)` | **destructive** | Gated |
 | `delete_snapshot(snapshot_id)` | **destructive** | Gated |
 
-**Safety rails inside every destructive tool** (defense in depth, independent of the harness gate):
-1. Refuse unless the resource has tag `janitor-demo=true` (configurable via `JANITOR_REQUIRE_TAG`; set empty to disable).
-2. Call AWS with `DryRun=True` first where the API supports it; surface permission errors cleanly.
-3. Return a structured result `{ok, resource_id, action, error?}` — never raise raw boto errors to the model.
+**Safety rails inside every destructive tool and `snapshot_volume`** (defense in depth, independent of the harness gate):
+1. Always refuse resources tagged `env=prod`/`production` — even if they also carry the demo tag, and even when the demo-tag rail is disabled.
+2. Refuse unless the resource has tag `janitor-demo=true` (configurable via `JANITOR_REQUIRE_TAG`; set empty to disable).
+3. Call AWS with `DryRun=True` first where the API supports it (EC2; ELBv2 has no dry-run); surface permission errors cleanly.
+4. Return a structured result `{ok, resource_id, action, error?}` — never raise raw boto errors to the model.
+
+IAM (`scripts/iam-policy.json`) limits deletes to `janitor-demo=true`; it does **not** block prod. The prod refusal is rail 1, in our code.
 
 Cost estimation uses a static price table for the demo region (us-east-1 default: gp3 $0.08/GB-mo,
 gp2 $0.10/GB-mo, snapshot $0.05/GB-mo, idle EIP $3.60/mo, ALB ~$16.43/mo base). Rationale: Cost
@@ -113,7 +116,7 @@ Single page:
 ### 4.5 `agent/` — agent spec & instructions
 
 `agent/manifest.json` is the TrueForge agent spec saved as `cloud-cost-janitor`:
-- `model`: `openai/<model>` (name from `OPENAI_MODEL`, default `gpt-5.2`), `temperature: 0.1`.
+- `model`: `openai/janitor-model` (TrueForge resource names must match `^[a-z][a-z0-9-]{0,62}[a-z0-9]$`; the real OpenAI id, e.g. `gpt-5.2`, goes in the provider's `model_id` from `OPENAI_MODEL_ID`), `temperature: 0.1`.
 - `mcp_servers`: `[{name: "aws-janitor", enable_tools: ["@all"], preload: true, require_approval_for_tools: ["@destructive", "delete_volume", "terminate_instance", "delete_load_balancer", "release_eip", "delete_snapshot"]}]`.
 - `config`: sandbox enabled, generative_ui disabled (our UI renders), ask_user_questions enabled, dynamic_sub_agents disabled (keeps the stream simple), iteration_limit 60.
 
@@ -166,7 +169,10 @@ scheduling, Terraform output, Slack notifications. Mention as "next steps" in th
 
 ## 9. Submission checklist
 
-- Public repo with working README (setup in ≤ 10 commands) and an "AI assistants used" section.
+- Public repo, MIT `LICENSE`, working README (setup in ≤ 10 commands) and an "AI assistants used" section.
+- README doubles as the writeup: problem, what the agent reaches, where it stops, architecture, how TrueForge is used, real vs mocked, known limits.
 - No secrets: `.env` git-ignored, `.env.example` committed.
-- Demo shows code running in the sandbox and the agent stopping before an irreversible action.
+- Recorded video ≤ 3:00 with ≥ 30 s in TrueForge's own UI; live demo ≤ 5:00. Both show code running in the sandbox and the agent stopping before an irreversible action.
+- Cut line: if the dashboard isn't integrated by 15:30, demo in TrueForge's UI only. The dashboard is optional; the approval gate is not.
+- The implementation plan is the source of truth where it differs from this spec.
 - Community post on LinkedIn/X tagging @truefoundry and @polariscodes.

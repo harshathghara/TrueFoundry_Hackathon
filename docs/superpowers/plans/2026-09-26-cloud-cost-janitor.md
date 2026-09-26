@@ -13,6 +13,10 @@
 ## Global Constraints
 
 - Build window: 12:00–19:00 IST, 26 Sep 2026. Submissions close 19:00. Cut scope, never the approval demo.
+- **Cut line — 15:30:** if the React app is not integrated end to end by 15:30, stop Tasks 10–11 and demo entirely in TrueForge's UI (http://localhost:8790): scan → sandbox plan file → approve one delete → deny one. The dashboard is polish; the gate is the score. Tasks 1–7 and 12 are never cut.
+- Recorded video ≤ 3:00, with ≥ 30 s showing TrueForge itself (its UI at :8790 with the agent and the approval pause). Live demo ≤ 5:00.
+- Submission needs an open license (`LICENSE`, MIT) and a writeup in the README: problem, what the agent reaches, where it stops, architecture, how TrueForge is used, real vs mocked, known limits.
+- This plan is the source of truth where it differs from the spec.
 - Agent MUST run on TrueForge; deletes MUST pause for human approval; generated code MUST run in the TrueForge sandbox.
 - AWS credentials live only in the MCP server's environment. Never commit `.env`. Commit `.env.example`.
 - Destructive tools refuse any resource lacking tag `janitor-demo=true` (env `JANITOR_REQUIRE_TAG`, empty disables).
@@ -29,16 +33,28 @@
 | 12:00 | Task 1 | Task 1 pair → Task 8 | Task 10 | Task 0 |
 | 13:00 | Task 2, 3 | Task 8 | Task 10 | Task 7 |
 | 14:00 | Task 4, 5 | Task 9 | Task 11 | Task 7 bootstrap live |
-| 15:30 | Task 6 (seed live) | Task 9 live | Task 11 | Task 12 |
+| 15:30 | Task 6 (seed live) | Task 9 live | Task 11 — **cut-line check** | Task 12 |
 | 16:00 | — Integration: Task 13 end-to-end (mentor checkpoint) — | | | |
 | 17:30 | Bug fixes | Bug fixes | Polish | Record backup video |
 | 18:30 | Freeze. Push. Submit. | | | |
+
+## Integration risks (green unit tests can still fail live)
+
+| Risk | Action |
+|---|---|
+| Bootstrap bodies are inferred from docs | On the first live run (Task 7.6), compare any 400 with http://localhost:8790/api/v1/docs **before** UI work. |
+| Event shapes in Task 8 are assumed | After the TrueForge smoke test, capture a real stream (Task 9.9 `JANITOR_DUMP_EVENTS`) and lock `test_real_stream_fixture` to it. |
+| Approvals may pause one tool at a time | The UI submits whatever cards are pending, so per-call pauses just mean one card per round. Demo still works. |
+| No default VPC in credits account | Task 0 Step 3b checks it before 16:00. ALB + stop waiters take a few minutes. |
+| ELB ignores `aws:ResourceTag` in IAM | If an approved ALB delete returns AccessDenied, switch that action's condition key to `elasticloadbalancing:ResourceTag/janitor-demo`. Never drop the tag check. |
+| `trueforge-sdk` doesn't resolve on PyPI | Pin whatever `pip index versions trueforge-sdk` lists. Bootstrap uses plain HTTP; only the bridge needs the SDK. |
+| Shell differences | Git Bash: `source .venv/Scripts/activate`. PowerShell: `.venv\Scripts\Activate.ps1`. |
 
 ## File Structure
 
 ```
 TrueFoundry_Hackathon/
-├── requirements.txt, requirements-dev.txt, pytest.ini, .env.example, .gitignore, README.md
+├── requirements.txt, requirements-dev.txt, pytest.ini, .env.example, .gitignore, README.md (writeup), LICENSE (MIT)
 ├── mcp_server/
 │   ├── __init__.py
 │   ├── pricing.py        # static price table + monthly_cost/estimate (pure)
@@ -64,6 +80,7 @@ TrueFoundry_Hackathon/
 │   ├── conftest.py
 │   ├── test_pricing.py, test_aws_scan.py, test_aws_blast.py, test_aws_actions.py, test_server.py
 │   ├── test_seed_cleanup.py, test_bootstrap.py, test_events.py, test_runner.py, test_main.py
+│   └── fixtures/real_turn.jsonl   # captured live TrueForge stream (Task 9 Step 10)
 └── web/                  # Vite React TS app
     ├── vite.config.ts
     └── src/{main.tsx, App.tsx, index.css, types.ts, state.ts, state.test.ts, api.ts, useSession.ts,
@@ -79,6 +96,11 @@ TrueFoundry_Hackathon/
 - [ ] **Step 1: Daytona key.** Sign up at daytona.io → API Keys → create a key with **Sandboxes** access AND **Snapshots write (create)**. (Without snapshot permission TrueForge sandbox setup fails.)
 - [ ] **Step 2: OpenAI key** from the organisers. Pick the model id they grant (e.g. `gpt-5.2`); record as `OPENAI_MODEL_ID`.
 - [ ] **Step 3: AWS IAM user** `cost-janitor` in the credits account. Attach the policy from Task 6's `scripts/iam-policy.json` (until it exists, use `ReadOnlyAccess` + the Task 6 policy later). Create an access key.
+- [ ] **Step 3b: Default VPC check** (seed needs a default VPC with ≥ 2 subnets in different AZs).
+
+Run: `aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[].VpcId" --region us-east-1`
+Expected: one `vpc-…` id. If empty: `aws ec2 create-default-vpc --region us-east-1`.
+
 - [ ] **Step 4: Start TrueForge.**
 
 Run: `node -v` (must be ≥ 22.14) then `npx @truefoundry/trueforge@latest`
@@ -695,6 +717,7 @@ git commit -m "feat: add blast-radius checks for cleanup candidates"
 - Consumes: `aws_scan.tags_of`.
 - Produces (all return `{"ok": bool, "action": str, "resource_id": str, "error"?: str, ...}`):
   `snapshot_volume(volume_id, region)` (adds `snapshot_id`), `delete_volume(volume_id, region)`, `terminate_instance(instance_id, region)`, `release_eip(allocation_id, region)`, `delete_snapshot(snapshot_id, region)`, `delete_load_balancer(arn, region)`. Backup snapshots are tagged `janitor-backup=true` and `janitor-demo=true`.
+- Rails (all six tools, including `snapshot_volume`): refuse `env=prod|production` **always**; refuse resources missing `JANITOR_REQUIRE_TAG` unless that env is empty. IAM limits deletes to the demo tag; the prod refusal is this second, in-tool check — IAM does not block prod.
 
 - [ ] **Step 1: Write the failing test** `tests/test_aws_actions.py`:
 ```python
@@ -731,8 +754,24 @@ def test_tag_rail_can_be_disabled(ec2, az, monkeypatch):
     assert aws_actions.delete_volume(vid, REGION)["ok"] is True
 
 
-def test_snapshot_volume_tags_backup(ec2, az):
+def test_prod_decoy_refused_even_with_demo_tag(ec2, az, monkeypatch):
+    vid = _vol(ec2, az, [DEMO_TAG, {"Key": "env", "Value": "prod"}])
+    for fn in (aws_actions.delete_volume, aws_actions.snapshot_volume):
+        out = fn(vid, REGION)
+        assert out["ok"] is False and "env=prod" in out["error"]
+    monkeypatch.setenv("JANITOR_REQUIRE_TAG", "")  # prod refusal does not depend on the demo-tag rail
+    assert "env=prod" in aws_actions.delete_volume(vid, REGION)["error"]
+    assert ec2.describe_volumes(VolumeIds=[vid])["Volumes"]
+
+
+def test_snapshot_refuses_untagged(ec2, az):
     vid = _vol(ec2, az, None)
+    out = aws_actions.snapshot_volume(vid, REGION)
+    assert out["ok"] is False and "janitor-demo=true" in out["error"]
+
+
+def test_snapshot_volume_tags_backup(ec2, az):
+    vid = _vol(ec2, az, [DEMO_TAG])
     out = aws_actions.snapshot_volume(vid, REGION)
     assert out["ok"] is True
     snap = ec2.describe_snapshots(SnapshotIds=[out["snapshot_id"]])["Snapshots"][0]
@@ -781,7 +820,13 @@ def _result(action, resource_id, error=None, **extra):
     return out
 
 
+PROD_VALUES = {"prod", "production"}
+
+
 def _tag_violation(tags: dict) -> str | None:
+    # Always on, independent of JANITOR_REQUIRE_TAG and of IAM: the tool itself never touches prod.
+    if tags.get("env", "").lower() in PROD_VALUES:
+        return "refused: resource is tagged env=prod"
     required = os.getenv("JANITOR_REQUIRE_TAG", "janitor-demo=true").strip()
     if not required:
         return None
@@ -819,6 +864,9 @@ def _guarded(action, resource_id, get_tags, do, dry_run=None):
 def snapshot_volume(volume_id: str, region: str) -> dict:
     ec2 = boto3.client("ec2", region_name=region)
     try:
+        violation = _tag_violation(tags_of(ec2.describe_volumes(VolumeIds=[volume_id])["Volumes"][0].get("Tags")))
+        if violation:
+            return _result("snapshot_volume", volume_id, violation)
         snap = ec2.create_snapshot(
             VolumeId=volume_id,
             Description=f"cloud-cost-janitor backup of {volume_id}",
@@ -826,7 +874,7 @@ def snapshot_volume(volume_id: str, region: str) -> dict:
                 {"Key": "janitor-backup", "Value": "true"}, {"Key": "janitor-demo", "Value": "true"}]}],
         )
         return _result("snapshot_volume", volume_id, snapshot_id=snap["SnapshotId"])
-    except (ClientError, BotoCoreError) as e:
+    except (ClientError, BotoCoreError, IndexError) as e:
         return _result("snapshot_volume", volume_id, f"{type(e).__name__}: {e}")
 
 
@@ -883,7 +931,7 @@ Note: `_tag_violation` reads the env on every call so `monkeypatch.setenv` works
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `pytest tests/test_aws_actions.py -v`
-Expected: 6 passed. If `test_delete_volume_deletes_tagged` fails because the volume is gone before the real delete, moto ignored `DryRun` — confirm with `pytest -x -vv`; then check moto version ≥ 5.0.
+Expected: 8 passed. If `test_delete_volume_deletes_tagged` fails because the volume is gone before the real delete, moto ignored `DryRun` — confirm with `pytest -x -vv`; then check moto version ≥ 5.0.
 
 - [ ] **Step 5: Commit**
 ```bash
@@ -1861,6 +1909,8 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'api.runner'`
 ```python
 """Drives one TrueForge session: streams turns in a background thread and fans events out to SSE subscribers."""
 import asyncio
+import json
+import os
 import threading
 from datetime import datetime, timezone
 
@@ -1953,6 +2003,10 @@ class SessionRunner:
         else:
             self._objects[ev.id] = ev
             event = _to_dict(ev)
+            dump = os.getenv("JANITOR_DUMP_EVENTS")
+            if dump:  # capture real (non-delta) events to lock normalizer tests to TrueForge's actual shapes
+                with open(dump, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event, default=str) + "\n")
         self._index[event["id"]] = event
         for out in self._normalizer.feed(event, self._index):
             if out["type"] == "approval":
@@ -2140,12 +2194,37 @@ Expected: 4 passed
 
 - [ ] **Step 9: Live check** (TrueForge + MCP + bootstrap done)
 
-Run: `uvicorn api.main:app --port 8080`, then `curl -s -X POST localhost:8080/api/scan -H "Content-Type: application/json" -d '{"region":"us-east-1"}'` and `curl -N localhost:8080/api/sessions/<id>/events`
+Run: `mkdir -p tests/fixtures && JANITOR_DUMP_EVENTS=tests/fixtures/real_turn.jsonl uvicorn api.main:app --port 8080`, then `curl -s -X POST localhost:8080/api/scan -H "Content-Type: application/json" -d '{"region":"us-east-1"}'` and `curl -N localhost:8080/api/sessions/<id>/events`
 Expected: stream of `data: {...}` lines ending with `{"type": "status", "status": "paused"}` after one or more `approval` events. If events arrive but `approval.tool` is `"unknown"`, print one raw `model.message` dict (add a temporary `print(event)` in `_handle`) and adjust `short_tool_name`/`find_call` plus their tests to the real field names.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 10: Lock the normalizer to the real stream.** Stop uvicorn once the stream has paused. Check `tests/fixtures/real_turn.jsonl` for secrets (`grep -E "sk-|AKIA" tests/fixtures/real_turn.jsonl` must print nothing), then add to `tests/test_events.py`:
+```python
+from pathlib import Path
+
+import pytest
+
+FIXTURE = Path(__file__).parent / "fixtures" / "real_turn.jsonl"
+
+
+@pytest.mark.skipif(not FIXTURE.exists(), reason="capture a real stream first (Task 9 Step 9)")
+def test_real_stream_fixture():
+    n, idx, out = Normalizer(), {}, []
+    for line in FIXTURE.read_text(encoding="utf-8").splitlines():
+        ev = json.loads(line)
+        idx[ev["id"]] = ev
+        out += n.feed(ev, idx)
+    approvals = [e for e in out if e["type"] == "approval"]
+    assert approvals, "real stream produced no approval events"
+    assert all(a["tool"] in {"delete_volume", "terminate_instance", "delete_load_balancer", "release_eip", "delete_snapshot"} for a in approvals)
+    assert all(a["resource_id"] for a in approvals)
+    assert any(e["type"] == "resources" and any("monthly_cost" in i for i in e["items"]) for e in out)
+    assert any(e["type"] == "step" and e["kind"] == "sandbox" for e in out)
+```
+Run: `pytest tests/test_events.py -v`. If it fails, fix `api/events.py` (not the fixture) until it passes, and keep the other normalizer tests green.
+
+- [ ] **Step 11: Commit**
 ```bash
-git add api tests/test_runner.py tests/test_main.py
+git add api tests/test_runner.py tests/test_main.py tests/test_events.py tests/fixtures/real_turn.jsonl
 git commit -m "feat: add TrueForge session runner and FastAPI SSE bridge"
 ```
 
@@ -2656,68 +2735,109 @@ git commit -m "feat: add dashboard with live agent feed and approval cards"
 
 ---
 
-### Task 12: README & submission assets (D)
+### Task 12: README writeup, LICENSE & submission assets (D)
 
 **Files:**
+- Create: `LICENSE`
 - Modify (overwrite): `README.md`
 
-- [ ] **Step 1: Write** `README.md`:
+- [ ] **Step 1: Write** `LICENSE` — the standard MIT License text, first line `MIT License`, then `Copyright (c) 2026 Cloud Cost Janitor contributors`, then the full MIT permission and warranty paragraphs (copy verbatim from https://opensource.org/license/mit).
+
+- [ ] **Step 2: Write** `README.md` (this is the submission writeup):
 ````markdown
 # 🧹 Cloud Cost Janitor
 
 An agent that **acts**: it finds idle AWS resources, prices them, builds a teardown plan in a sandbox,
 checks blast radius, and deletes **only what a human approves**. Built on
-[TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris).
+[TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris). MIT licensed.
 
-## How the harness does the work
-| Requirement | Where |
+## The problem
+Cloud accounts collect waste: unattached EBS volumes, stopped instances still paying for disks, load
+balancers with no targets, idle Elastic IPs, stale snapshots. Finding, pricing and safely removing them is
+recurring toil an engineer would hand off — if nothing gets deleted without their sign-off.
+
+## What the agent reaches
+A real AWS account through our MCP server `aws-janitor` (`mcp_server/`, boto3): EC2 volumes, instances,
+Elastic IPs, snapshots, ELBv2 load balancers, and Route 53 records (read-only, for blast radius).
+AWS credentials live only in the MCP server process — the model and the sandbox never see them.
+
+## Where it stops
+| Action | Gate |
 |---|---|
-| Reaches a real system | `mcp_server/` — FastMCP server exposing AWS (boto3) as MCP tools, connected to TrueForge |
-| Runs what it writes | Agent writes + runs Python in TrueForge's Daytona sandbox to build `teardown-plan.md/csv` |
-| Knows when to stop | Delete/terminate/release tools are `destructiveHint` + named in `require_approval_for_tools`; TrueForge pauses, our UI shows cost + blast radius, a human decides |
+| list / price / blast-radius | Runs autonomously (read-only) |
+| `snapshot_volume` | Runs autonomously — additive and reversible — but refuses untagged or `env=prod` volumes |
+| `delete_volume`, `terminate_instance`, `delete_load_balancer`, `release_eip`, `delete_snapshot` | **TrueForge pauses for human approval** every time |
 
-Defense in depth: destructive tools also refuse anything not tagged `janitor-demo=true`, run an EC2 `DryRun` first,
-and the IAM policy only allows deletes on that tag. Snapshots (reversible) run without a gate — deletes never do.
+Layers behind the approval gate:
+1. MCP `destructiveHint: true` → TrueForge `@destructive` gate, plus every delete tool listed by name in `require_approval_for_tools`.
+2. In-tool rail: refuses anything not tagged `janitor-demo=true`.
+3. In-tool rail: **always** refuses anything tagged `env=prod` — even if it also carries the demo tag. This is our check, not IAM's.
+4. EC2 `DryRun=True` before each real EC2 delete.
+5. IAM: the `cost-janitor` user may only delete resources tagged `janitor-demo=true`. IAM does **not** block prod; layer 3 does.
 
 ## Architecture
 ```
 React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) → OpenAI · Daytona sandbox · MCP aws-janitor (8000) → AWS
 ```
 
+## How TrueForge is used
+- **Agent loop & model:** the `cloud-cost-janitor` agent (spec in `agent/`) runs on TrueForge with an OpenAI model, registered by `scripts/bootstrap_trueforge.py` via TrueForge's HTTP API.
+- **Tools:** our MCP server is attached as a remote connector; TrueForge calls the tools.
+- **Sandbox:** the agent writes and runs Python in TrueForge's Daytona sandbox to rank costs and produce `teardown-plan.md` / `.csv`.
+- **Human checkpoints:** TrueForge emits `tool.approval_required`; our bridge resumes the turn with `user.tool_approval` allow/deny decisions from the dashboard. The same agent also works in TrueForge's own chat UI.
+
+## Real vs mocked
+| Real | Mocked / simulated |
+|---|---|
+| AWS resources created by `scripts/seed_aws.py` in a live account | Unit tests use `moto` (in-memory AWS) — no real calls |
+| Every MCP tool call against AWS during the demo | Prices come from a static us-east-1 table, not Cost Explorer or the Pricing API |
+| The sandbox Python run and plan files | "Idle" = state signals (unattached, stopped, zero targets, unassociated), not 14-day CloudWatch metrics |
+| Approved deletes (they really delete) | Snapshot age threshold is 0 days in the demo (`JANITOR_SNAPSHOT_MIN_AGE_DAYS`) so fresh seeds show up |
+| OpenAI model calls through TrueForge | The dry-run path is AWS's `DryRun` validation, not an executed delete |
+
+## Known limits
+- One region per run, one account; no multi-account fan-out.
+- Static prices (us-east-1 list prices); other regions fall back to them.
+- Snapshot cost is an upper bound (full volume size; snapshots are incremental).
+- Audit log is in memory; restarting the API loses it.
+- Destructive actions only touch `janitor-demo=true` resources by design; running on real waste means changing `JANITOR_REQUIRE_TAG` deliberately.
+
 ## Run it (≈10 minutes)
-Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account, an OpenAI key, a Daytona key (Sandboxes + Snapshots write).
+Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key, a Daytona key (Sandboxes + Snapshots write).
 ```bash
 cp .env.example .env                                  # fill in keys
-python -m venv .venv && source .venv/Scripts/activate  # Windows Git Bash; use .venv/bin/activate on macOS/Linux
+python -m venv .venv
+source .venv/Scripts/activate                         # Git Bash · PowerShell: .venv\Scripts\Activate.ps1 · macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
 npx @truefoundry/trueforge@latest                      # terminal 1 → http://localhost:8790
 python -m mcp_server.server                            # terminal 2 → http://localhost:8000/mcp
 python -m scripts.bootstrap_trueforge                  # registers model, MCP server, sandbox, agent
-python -m scripts.seed_aws                             # creates tagged demo waste (~2 min)
+python -m scripts.seed_aws                             # creates tagged demo waste (a few minutes)
 uvicorn api.main:app --port 8080                       # terminal 3
 cd web && npm install && npm run dev                   # terminal 4 → http://localhost:5173
 ```
-Click **Run janitor** → watch the steps → approve / deny → read the report.
+Click **Run janitor** → watch the steps → approve / deny → read the report. Or open http://localhost:8790,
+pick the `cloud-cost-janitor` agent, and ask it to clean up us-east-1.
 Afterwards: `python -m scripts.cleanup_aws`.
 
-Tests (no AWS needed, uses moto): `pytest` and `cd web && npm test`.
+Tests (no AWS needed): `pytest` and `cd web && npm test`.
 
 ## AI assistants used
-Claude Code (Anthropic) helped with planning and implementation; every line was reviewed by the team, and we can walk through the architecture.
+Claude Code (Anthropic) helped with planning and implementation. The team reviewed every line and can walk through the architecture.
 
 ## Next steps
-Multi-region fan-out, Cost Explorer-backed pricing, scheduled weekly runs via TrueForge Schedules, Slack approvals.
+Multi-region fan-out, Cost Explorer-backed pricing, weekly runs via TrueForge Schedules, Slack approvals.
 ````
 
-- [ ] **Step 2: Secrets check**
+- [ ] **Step 3: Secrets check**
 
 Run: `git ls-files | grep -E "^\.env$" ; git grep -nE "sk-[A-Za-z0-9]{10,}|AKIA[0-9A-Z]{16}" || echo clean`
 Expected: no `.env` listed, prints `clean`.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 ```bash
-git add README.md
-git commit -m "docs: add runnable README with harness mapping and AI disclosure"
+git add README.md LICENSE
+git commit -m "docs: add submission writeup and MIT license"
 ```
 
 ---
@@ -2728,12 +2848,18 @@ git commit -m "docs: add runnable README with harness mapping and AI disclosure"
 
 - [ ] **Step 1: Full stack up** — 4 terminals as in README; `curl localhost:8080/api/health` → `{"trueforge": true, "mcp": true}`.
 - [ ] **Step 2: Fresh seed** — `python -m scripts.cleanup_aws && python -m scripts.seed_aws`.
+- [ ] **Step 2b: Cut-line fallback (only if the dashboard isn't integrated by 15:30).** Skip Steps 3–4 and run the same flow in TrueForge's UI at http://localhost:8790 with the `cloud-cost-janitor` agent: ask "Run the cost cleanup for us-east-1" → show a sandbox step and the plan file → Allow one delete → Deny one with a reason. Then continue at Step 5, using the TrueForge-only demo script in Step 6.
 - [ ] **Step 3: Run from the UI.** Expected in order: list steps → `estimate_monthly_cost` → sandbox steps (violet) → blast-radius results (prod decoy shows red) → approval panel with ≥ 4 cards with $/mo and "safe".
 - [ ] **Step 4: Decide** — approve all except the EIP; deny it with reason "reserved for tomorrow's launch". Submit.
-Expected: status → running → done; report table shows deleted/denied/skipped-unsafe; audit trail lists both decisions; AWS console confirms the approved volumes are gone and the EIP + prod decoy remain.
+Expected: status → running → done; report table shows deleted/denied/skipped-unsafe; audit trail lists both decisions; AWS console confirms the approved volumes are gone and the EIP + prod decoy remain. If approvals arrive one call at a time, decide each card as it appears — same result, more rounds.
+If an approved ALB delete returns `AccessDenied`, change `scripts/iam-policy.json` so `elasticloadbalancing:DeleteLoadBalancer` sits in its own statement with condition key `elasticloadbalancing:ResourceTag/janitor-demo` (keep the tag check), update the IAM user, and retry.
 - [ ] **Step 5: Verify pytest + web tests still green** — `pytest && (cd web && npm test)`.
-- [ ] **Step 6: Demo script (5 min)** — 0:00 problem ($ number from KPI) · 0:45 click Run, narrate harness: MCP reach, sandbox code (open a sandbox step to show the Python) · 2:30 **the gate**: read one card aloud (cost, blast radius), point at the prod decoy skipped · 3:30 approve/deny, show report + audit · 4:30 safety layers slide (annotation gate, name gate, tag rail, DryRun, IAM condition).
-- [ ] **Step 7: Record a backup video** of Steps 3–4 (no keys on screen), then re-seed for the live demo.
+- [ ] **Step 6: Demo scripts.**
+  - **Recorded video — hard cap 3:00, ≥ 30 s in TrueForge's own UI:**
+    0:00–0:20 problem + $ waste number · 0:20–0:50 **TrueForge UI (:8790)**: the `cloud-cost-janitor` agent's Overview (delete tools shielded) and one session paused on Allow/Deny · 0:50–1:40 dashboard run: MCP tool steps, open a sandbox step to show the generated Python, prod decoy marked unsafe · 1:40–2:25 **the gate**: read one card (cost, blast radius), approve some, deny the EIP with a reason · 2:25–2:50 report + audit trail + AWS console showing what's gone and what's kept · 2:50–3:00 safety layers in one line.
+  - **Live demo — ≤ 5:00:** same order, with time for the safety layers (annotation gate, name gate, demo-tag rail, in-tool prod refusal, DryRun, IAM condition) and one architecture sentence per layer.
+  - **TrueForge-only variant (cut-line fallback):** replace the dashboard segments with the same actions in TrueForge's chat UI; keep the timings.
+- [ ] **Step 7: Record the video** per the 3:00 script (no keys on screen). Check length ≤ 3:00 before uploading. Re-seed for the live demo.
 - [ ] **Step 8: Push & submit** (after team OK):
 ```bash
 git push origin main
