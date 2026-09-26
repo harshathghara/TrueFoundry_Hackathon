@@ -1,4 +1,4 @@
-# Cloud Cost Janitor
+# Cloud Cost Janitor: Agentic FinOps with Human-in-the-Loop Approval
 
 An agent that **acts**: it finds idle AWS resources, prices them, writes a teardown plan, and deletes **only what a human approves**. Built on [TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris). MIT licensed.
 
