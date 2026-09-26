@@ -7,6 +7,7 @@ export interface Resource {
   kind?: 'ebs' | 'snapshot' | 'eip' | 'lb' | 'ec2_stopped'
   monthly_cost?: number
   blast_radius?: string
+  blast_warnings?: string[]
   age_days?: number
   size_gb?: number
   name?: string

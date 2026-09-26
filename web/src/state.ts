@@ -47,5 +47,7 @@ export function reduce(s: State, a: Action): State {
     }
     case 'done':
       return { ...s, output: a.output }
+    default:
+      return s
   }
 }

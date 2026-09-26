@@ -23,6 +23,11 @@ export function ApprovalCards({ approvals, resources, status, submitError, onSub
             <div className="mt-1 text-sm text-slate-300">
               Cost: <b>{r?.monthly_cost != null ? `$${r.monthly_cost.toFixed(2)}/mo` : 'unknown'}</b> · Blast radius: <b>{r?.blast_radius ?? 'not checked'}</b>
             </div>
+            {r?.blast_warnings && r.blast_warnings.length > 0 && (
+              <div className="mt-1 space-y-0.5 text-sm text-amber-400">
+                {r.blast_warnings.map((w) => <div key={w}>⚠ {w}</div>)}
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button onClick={() => set(a.tool_call_id, true)} className={`rounded px-3 py-1 ${c?.allow === true ? 'bg-emerald-600' : 'bg-slate-700'}`}>Approve</button>
               <button onClick={() => set(a.tool_call_id, false)} className={`rounded px-3 py-1 ${c?.allow === false ? 'bg-rose-600' : 'bg-slate-700'}`}>Deny</button>
