@@ -65,7 +65,8 @@ def _load_balancer(region, arn):
     elb = boto3.client("elbv2", region_name=region)
     lb = elb.describe_load_balancers(LoadBalancerArns=[arn])["LoadBalancers"][0]
     reasons = _prod_reason(tags_of(elb.describe_tags(ResourceArns=[arn])["TagDescriptions"][0]["Tags"]))
-    warnings = []
+    warnings = [f"listener {l['Protocol']}:{l['Port']} still configured"
+                for l in elb.describe_listeners(LoadBalancerArn=arn)["Listeners"]]
     try:
         r53 = boto3.client("route53")
         for zone in r53.list_hosted_zones()["HostedZones"]:

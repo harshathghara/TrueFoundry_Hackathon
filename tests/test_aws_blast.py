@@ -38,3 +38,18 @@ def test_termination_protected_instance_is_unsafe(ec2, ami_id):
 def test_unknown_prefix_is_unsafe():
     out = check_blast_radius("db-xyz", REGION)
     assert out["safe"] is False
+
+
+def test_idle_lb_listener_is_warning_not_reason(ec2, elbv2):
+    vpc = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
+    subnets = [s["SubnetId"] for s in ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc]}])["Subnets"]][:2]
+    lb = elbv2.create_load_balancer(Name="idle", Subnets=subnets, Type="application", Tags=[DEMO_TAG])["LoadBalancers"][0]
+    arn = lb["LoadBalancerArn"]
+    tg = elbv2.create_target_group(Name="idle-tg", Protocol="HTTP", Port=80, VpcId=vpc, TargetType="instance")["TargetGroups"][0]
+    elbv2.create_listener(LoadBalancerArn=arn, Protocol="HTTP", Port=80,
+                          DefaultActions=[{"Type": "forward", "TargetGroupArn": tg["TargetGroupArn"]}])
+
+    out = check_blast_radius(arn, REGION)
+    assert out["safe"] is True
+    assert out["reasons"] == []
+    assert "listener HTTP:80 still configured" in out["warnings"]
