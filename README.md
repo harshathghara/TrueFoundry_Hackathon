@@ -31,11 +31,11 @@ Layers behind the approval gate:
 
 ## Architecture
 ```
-React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) → OpenAI · Daytona sandbox · MCP aws-janitor (8000) → AWS
+React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) → TrueFoundry AI Gateway · Daytona sandbox · MCP aws-janitor (8000) → AWS
 ```
 
 ## How TrueForge is used
-- **Agent loop & model:** the `cloud-cost-janitor` agent (spec in `agent/`) runs on TrueForge, registered by `scripts/bootstrap_trueforge.py` via TrueForge's HTTP API. The model is registered in TrueForge as `openai/janitor-model`, backed by the real OpenAI model id from `OPENAI_MODEL_ID` (`gpt-5.5` for our demo run).
+- **Agent loop & model:** the `cloud-cost-janitor` agent (spec in `agent/`) runs on TrueForge, registered by `scripts/bootstrap_trueforge.py` via TrueForge's HTTP API. The model provider is selectable via `MODEL_PROVIDER`: set it to `gateway` and the model runs through the **TrueFoundry AI Gateway**, registered as a custom OpenAI-compatible provider `gpt-model/openai` proxying to the gateway model id `vm-polaris/openai` (served by `gpt-4o-mini`). OpenAI-direct is kept as a fallback — `MODEL_PROVIDER=openai` (the default, unchanged from before) registers the model as `openai/janitor-model`, backed by the real OpenAI model id from `OPENAI_MODEL_ID` (`gpt-5.5` for our demo run).
 - **Tools:** our MCP server is attached as a remote connector; TrueForge calls the tools.
 - **Sandbox:** the agent writes and runs Python in TrueForge's Daytona sandbox to rank costs and produce `teardown-plan.md` / `.csv`.
 - **Human checkpoints:** TrueForge emits `tool.approval_required`; our bridge resumes the turn with `user.tool_approval` allow/deny decisions from the dashboard. The dashboard only submits decisions once the agent has paused for approval, and if a submit fails the approval cards stay on screen so you can resubmit. The same agent also works in TrueForge's own chat UI.
@@ -58,7 +58,7 @@ React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) �
 - The MCP server has no auth; it binds to 127.0.0.1 only. Tag and prod rails still apply to any caller.
 
 ## Run it (≈10 minutes)
-Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key, a Daytona key with `write:sandboxes`, `write:snapshots` and `delete:snapshots` (the default quick-start key is not enough).
+Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key OR a TrueFoundry Gateway key, a Daytona key with `write:sandboxes`, `write:snapshots` and `delete:snapshots` (the default quick-start key is not enough).
 ```bash
 cp .env.example .env                                  # fill in keys
 # once per AWS account, with ADMIN credentials (the least-privilege app user cannot create IAM roles):
