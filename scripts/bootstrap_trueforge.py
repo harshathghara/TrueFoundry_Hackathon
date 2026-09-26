@@ -11,10 +11,25 @@ MODEL_NAME = "janitor-model"
 MODEL_FQN = f"openai/{MODEL_NAME}"
 MCP_NAME = "aws-janitor"
 
+# TrueFoundry AI Gateway: a custom OpenAI-compatible provider registered in TrueForge.
+GATEWAY_PROVIDER_NAME = "gpt-model"
+GATEWAY_MODEL_NAME = "openai"
+GATEWAY_MODEL_FQN = f"{GATEWAY_PROVIDER_NAME}/{GATEWAY_MODEL_NAME}"
+
 
 def model_provider_body(api_key: str, model_id: str) -> dict:
     return {"manifest": {"type": "openai", "auth": {"api_key": api_key},
                          "models": [{"name": MODEL_NAME, "model_id": model_id, "properties": {}}]}}
+
+
+def gateway_provider_body(api_key: str, base_url: str, model_id: str) -> dict:
+    return {"manifest": {
+        "type": "custom",
+        "name": GATEWAY_PROVIDER_NAME,
+        "base_url": base_url,
+        "auth": {"api_key": api_key},
+        "models": [{"name": GATEWAY_MODEL_NAME, "model_id": model_id, "properties": {}}],
+    }}
 
 
 def mcp_server_body(url: str) -> dict:
@@ -42,13 +57,33 @@ def _check(resp: httpx.Response, what: str, secrets: tuple = ()) -> httpx.Respon
 
 def bootstrap(base_url: str, env: dict, http: httpx.Client | None = None) -> None:
     http = http or httpx.Client(base_url=base_url, timeout=60)
-    secrets = (env["OPENAI_API_KEY"], env["DAYTONA_API_KEY"])
-    _check(http.put("/api/v1/settings/model-providers", json=model_provider_body(env["OPENAI_API_KEY"], env["OPENAI_MODEL_ID"])), "model provider", secrets)
+    openai_key = env.get("OPENAI_API_KEY", "")
+    gateway_key = env.get("TFY_GATEWAY_API_KEY", "")
+    secrets = tuple(s for s in (openai_key, env.get("DAYTONA_API_KEY", ""), gateway_key) if s)
+    provider = env.get("MODEL_PROVIDER", "openai")
+
+    if provider == "gateway":
+        gateway_base_url = env.get("TFY_GATEWAY_BASE_URL", "https://gateway.truefoundry.ai")
+        gateway_model_id = env.get("TFY_GATEWAY_MODEL_ID", "vm-polaris/openai")
+        _check(http.put("/api/v1/settings/model-providers",
+                         json=gateway_provider_body(gateway_key, gateway_base_url, gateway_model_id)),
+               "model provider (gateway)", secrets)
+        if openai_key:
+            _check(http.put("/api/v1/settings/model-providers",
+                             json=model_provider_body(openai_key, env.get("OPENAI_MODEL_ID", ""))),
+                   "model provider (openai fallback)", secrets)
+        model_fqn = GATEWAY_MODEL_FQN
+    else:
+        _check(http.put("/api/v1/settings/model-providers",
+                         json=model_provider_body(openai_key, env.get("OPENAI_MODEL_ID", ""))),
+               "model provider", secrets)
+        model_fqn = MODEL_FQN
+
     _check(http.put("/api/v1/settings/mcp-servers", json=mcp_server_body(env["MCP_PUBLIC_URL"])), "mcp server", secrets)
     _check(http.put("/api/v1/settings/sandbox-providers", json=sandbox_body(env["DAYTONA_API_KEY"])), "sandbox provider", secrets)
 
     name = env["AGENT_NAME"]
-    manifest = build_agent_manifest(MODEL_FQN)
+    manifest = build_agent_manifest(model_fqn)
     existing = _check(http.get("/api/v1/agents", params={"agent_name": name}), "list agents", secrets).json()["data"]
     match = next((a for a in existing if a["name"] == name), None)
     description = "Finds idle AWS resources, prices them, and deletes only what a human approves."
