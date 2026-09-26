@@ -1439,7 +1439,9 @@ def test_bodies():
         "type": "openai", "auth": {"api_key": "sk"},
         "models": [{"name": "janitor-model", "model_id": "gpt-5.2", "properties": {}}]}}
     assert bt.mcp_server_body("http://localhost:8000/mcp")["manifest"]["type"] == "remote"
-    assert bt.sandbox_body("dk") == {"manifest": {"type": "daytona", "auth": {"api_key": "dk"}}}
+    assert bt.sandbox_body("dk") == {"manifest": {"type": "daytona", "auth": {"api_key": "dk"}, "exec_timeout_ms": 60000,
+                                                  "auto_stop_interval_in_minutes": 5, "auto_archive_interval_in_minutes": 60,
+                                                  "auto_delete_interval_in_minutes": 7200}}
 
 
 def test_bootstrap_creates_agent_when_missing():
@@ -1539,7 +1541,10 @@ def mcp_server_body(url: str) -> dict:
 
 
 def sandbox_body(api_key: str) -> dict:
-    return {"manifest": {"type": "daytona", "auth": {"api_key": api_key}}}
+    # TrueForge v0.2.1 requires the interval/timeout fields; values = its shipped Daytona catalog defaults.
+    return {"manifest": {"type": "daytona", "auth": {"api_key": api_key}, "exec_timeout_ms": 60000,
+                         "auto_stop_interval_in_minutes": 5, "auto_archive_interval_in_minutes": 60,
+                         "auto_delete_interval_in_minutes": 7200}}
 
 
 def _check(resp: httpx.Response, what: str) -> httpx.Response:
@@ -2803,13 +2808,19 @@ React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) �
 - Destructive actions only touch `janitor-demo=true` resources by design; running on real waste means changing `JANITOR_REQUIRE_TAG` deliberately.
 
 ## Run it (≈10 minutes)
-Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key, a Daytona key (Sandboxes + Snapshots write).
+Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key, a Daytona key with `write:sandboxes`, `write:snapshots` and `delete:snapshots` (the default quick-start key is not enough).
 ```bash
 cp .env.example .env                                  # fill in keys
+# once per AWS account, with ADMIN credentials (the least-privilege app user cannot create IAM roles):
+aws iam create-service-linked-role --aws-service-name elasticloadbalancing.amazonaws.com
+aws iam create-user --user-name cost-janitor && aws iam put-user-policy --user-name cost-janitor --policy-name cloud-cost-janitor --policy-document file://scripts/iam-policy.json
+aws iam create-access-key --user-name cost-janitor   # put these keys in .env
 python -m venv .venv
 source .venv/Scripts/activate                         # Git Bash · PowerShell: .venv\Scripts\Activate.ps1 · macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
-npx @truefoundry/trueforge@latest                      # terminal 1 → http://localhost:8790
+# terminal 1 → http://localhost:8790 (TrueForge blocks localhost MCP URLs unless allowed):
+OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]' npx @truefoundry/trueforge@latest
+#   PowerShell: $env:OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]'; npx @truefoundry/trueforge@latest
 python -m mcp_server.server                            # terminal 2 → http://localhost:8000/mcp
 python -m scripts.bootstrap_trueforge                  # registers model, MCP server, sandbox, agent
 python -m scripts.seed_aws                             # creates tagged demo waste (a few minutes)
