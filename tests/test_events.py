@@ -80,3 +80,32 @@ def test_lifecycle_events():
     assert n.feed({"type": "sandbox.created", "id": "s", "sandbox_id": "sb1"}, {})[0]["kind"] == "sandbox"
     assert n.feed({"type": "thread.created", "id": "th", "title": "pricing"}, {})[0]["kind"] == "subagent"
     assert n.feed({"type": "mcp.initialize", "id": "i"}, {}) == []
+
+
+def test_turn_done_with_string_output():
+    n = Normalizer()
+    done = {"type": "turn.done", "id": "d", "state": {"status": "done", "output": "plain", "required_actions": []}}
+    assert n.feed(done, {}) == [{"type": "done", "output": "plain"}, {"type": "status", "status": "done"}]
+
+
+def test_tool_response_with_non_mapping_arguments_does_not_raise():
+    n, idx = Normalizer(), {}
+    idx["m1"] = {"type": "model.message", "id": "m1", "thread_id": "main", "content": "",
+                 "tool_calls": [{"id": "c1", "function": {"name": "delete_volume", "arguments": [1, 2, 3]}}]}
+    out = n.feed({"type": "tool.response", "id": "r1", "tool_call_id": "c1", "content": "ok"}, idx)
+    assert out[0]["detail"]["args"] == {}
+
+
+def test_blast_radius_reasons_as_string():
+    n, idx = Normalizer(), {}
+    idx["m1"] = _msg("m1", [("c1", "check_blast_radius", {"resource_id": "vol-9"})])
+    out = n.feed({"type": "tool.response", "id": "r1", "tool_call_id": "c1",
+                  "content": json.dumps({"resource_id": "vol-9", "safe": False, "reasons": "tagged env=prod"})}, idx)
+    assert out[-1] == {"type": "resources", "items": [{"id": "vol-9", "blast_radius": "tagged env=prod"}]}
+
+
+def test_tool_response_missing_id_does_not_raise():
+    n, idx = Normalizer(), {}
+    idx["m1"] = _msg("m1", [("c1", "list_unattached_volumes", {"region": "us-east-1"})])
+    out = n.feed({"type": "tool.response", "tool_call_id": "c1", "content": json.dumps({"items": []})}, idx)
+    assert out[0]["id"] is None

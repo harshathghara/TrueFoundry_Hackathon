@@ -30,10 +30,15 @@ def parse_content(content: Any) -> Any:
 
 def _args(call: dict) -> dict:
     raw = call.get("function", {}).get("arguments") or "{}"
-    try:
-        return json.loads(raw) if isinstance(raw, str) else dict(raw)
-    except ValueError:
-        return {"raw": raw}
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {"raw": raw}
+        return parsed if isinstance(parsed, dict) else {"raw": parsed}
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {}
 
 
 def find_call(index: dict[str, dict], call_id: str, source_event_id: str | None = None) -> dict | None:
@@ -60,16 +65,16 @@ class Normalizer:
         if t == "turn.created":
             return [{"type": "status", "status": "running"}]
         if t == "model.message":
-            return [{"type": "message", "id": event["id"], "content": event["content"]}] if event.get("content") else []
+            return [{"type": "message", "id": event.get("id"), "content": event["content"]}] if event.get("content") else []
         if t == "tool.response":
             return self._tool_response(event, index)
         if t == "tool.approval_required":
             return self._approvals(event, index)
         if t == "sandbox.created":
-            return [{"type": "step", "id": event["id"], "kind": "sandbox", "title": "Sandbox provisioned",
+            return [{"type": "step", "id": event.get("id"), "kind": "sandbox", "title": "Sandbox provisioned",
                      "detail": {"sandbox_id": event.get("sandbox_id")}}]
         if t == "thread.created":
-            return [{"type": "step", "id": event["id"], "kind": "subagent", "title": event.get("title", "subagent"), "detail": {}}]
+            return [{"type": "step", "id": event.get("id"), "kind": "subagent", "title": event.get("title", "subagent"), "detail": {}}]
         if t == "turn.done":
             return self._done(event.get("state") or {})
         return []
@@ -78,12 +83,20 @@ class Normalizer:
         call = find_call(index, event.get("tool_call_id"))
         tool = short_tool_name(call) if call else "tool"
         result = parse_content(event.get("content"))
-        out = [{"type": "step", "id": event["id"], "kind": _kind(tool), "title": tool,
+        out = [{"type": "step", "id": event.get("id"), "kind": _kind(tool), "title": tool,
                 "detail": {"args": _args(call) if call else {}, "result": result}}]
         if tool in LIST_TOOLS and isinstance(result, dict) and isinstance(result.get("items"), list):
             out.append({"type": "resources", "items": result["items"]})
         if tool == "check_blast_radius" and isinstance(result, dict) and "resource_id" in result:
-            label = "safe" if result.get("safe") else "; ".join(result.get("reasons") or ["unsafe"])
+            reasons = result.get("reasons")
+            if result.get("safe"):
+                label = "safe"
+            elif isinstance(reasons, str) and reasons:
+                label = reasons
+            elif isinstance(reasons, list) and reasons:
+                label = "; ".join(reasons)
+            else:
+                label = "unsafe"
             out.append({"type": "resources", "items": [{"id": result["resource_id"], "blast_radius": label}]})
         return out
 
@@ -102,7 +115,13 @@ class Normalizer:
         if status == "done" and state.get("required_actions"):
             return [{"type": "status", "status": "paused"}]
         if status == "done":
-            output = (state.get("output") or {}).get("content") or ""
+            raw_output = state.get("output")
+            if isinstance(raw_output, dict):
+                output = raw_output.get("content") or ""
+            elif isinstance(raw_output, str):
+                output = raw_output
+            else:
+                output = ""
             return [{"type": "done", "output": output}, {"type": "status", "status": "done"}]
         message = state.get("message") or state.get("reason") or status
         return [{"type": "status", "status": "error", "message": message}]
