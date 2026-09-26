@@ -1,100 +1,138 @@
-# 🧹 Cloud Cost Janitor
+# Cloud Cost Janitor
 
-An agent that **acts**: it finds idle AWS resources, prices them, builds a teardown plan in a sandbox,
-checks blast radius, and deletes **only what a human approves**. Built on
-[TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris). MIT licensed.
+An agent that **acts**: it finds idle AWS resources, prices them, writes a teardown plan, and deletes **only what a human approves**. Built on [TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris). MIT licensed.
 
 ## The problem
-Cloud accounts collect waste: unattached EBS volumes, stopped instances still paying for disks, load
-balancers with no targets, idle Elastic IPs, stale snapshots. Finding, pricing and safely removing them is
-recurring toil an engineer would hand off — if nothing gets deleted without their sign-off.
+
+Cloud accounts collect waste: unattached EBS volumes, stopped instances that still pay for disks, load balancers with no targets, idle Elastic IPs, and stale snapshots. Finding them, pricing them, and removing them is recurring toil — as long as nothing is deleted without a sign-off.
 
 ## What the agent reaches
-A real AWS account through our MCP server `aws-janitor` (`mcp_server/`, boto3): EC2 volumes, instances,
-Elastic IPs, snapshots, ELBv2 load balancers, and Route 53 records (read-only, for blast radius).
-AWS credentials live only in the MCP server process — the model and the sandbox never see them.
-Blast-radius checks on load balancers also report any remaining listeners as warnings (non-blocking).
+
+A real AWS account, through our MCP server `aws-janitor` (`mcp_server/`, boto3): EC2 volumes, instances, Elastic IPs, snapshots, ELBv2 load balancers, and Route 53 records (read-only, for blast radius). AWS credentials live only in the MCP process. The model and the Daytona sandbox never see them.
+
+Junk is a fixed rule, not a model guess: volume status `available`, instance state `stopped`, a load balancer with zero targets, an Elastic IP with no association, or a self-owned snapshot older than `JANITOR_SNAPSHOT_MIN_AGE_DAYS`.
 
 ## Where it stops
+
 | Action | Gate |
 |---|---|
-| list / price / blast-radius | Runs autonomously (read-only) |
-| `snapshot_volume` | Runs autonomously — additive and reversible — but refuses untagged or `env=prod` volumes |
-| `delete_volume`, `terminate_instance`, `delete_load_balancer`, `release_eip`, `delete_snapshot` | **TrueForge pauses for human approval** every time |
+| list / price / blast-radius | Runs on its own (read-only) |
+| `snapshot_volume` | Runs on its own, but refuses untagged or `env=prod` volumes |
+| `delete_volume`, `terminate_instance`, `delete_load_balancer`, `release_eip`, `delete_snapshot` | **TrueForge pauses for Allow / Deny** every time |
 
-Layers behind the approval gate:
-1. MCP `destructiveHint: true` → TrueForge `@destructive` gate, plus every delete tool listed by name in `require_approval_for_tools`.
-2. In-tool rail: refuses anything not tagged `janitor-demo=true`.
-3. In-tool rail: **always** refuses anything tagged `env=prod` — even if it also carries the demo tag. This is our check, not IAM's.
+Behind that pause:
+
+1. MCP `destructiveHint: true`, plus each delete tool named in `require_approval_for_tools`.
+2. The tool refuses anything without the tag `janitor-demo=true`.
+3. The tool always refuses `env=prod` or `env=production`, even when the demo tag is also present. IAM does not do this check.
 4. EC2 `DryRun=True` before each real EC2 delete.
-5. IAM: the `cost-janitor` user may only stop or delete resources tagged `janitor-demo=true`. IAM does **not** block prod; layer 3 does.
+5. The `cost-janitor` IAM user may delete only resources tagged `janitor-demo=true`.
+
+Blast radius also skips a candidate when a volume is attached, a snapshot backs an AMI, termination protection is on, an Elastic IP is associated, or a listener or Route 53 alias still points at a load balancer.
 
 ## Architecture
+
+TrueForge's own UI and the `cloud-cost-janitor` agent both run in the local TrueForge process (`http://localhost:8790`). The UI sends the message to that agent. The agent does not run inside the sandbox.
+
+```text
+You → TrueForge UI + agent (:8790)
+        ├─ model call → TrueFoundry AI Gateway → LLM
+        ├─ AWS tools  → MCP aws-janitor (:8000) → AWS
+        └─ plan script → Daytona sandbox (teardown-plan.md / .csv only)
+
+Optional dashboard: React (:5173) → FastAPI (:8080) → the same TrueForge agent
 ```
-React (5173) → FastAPI bridge (8080) → trueforge-sdk → TrueForge (8790) → TrueFoundry AI Gateway · Daytona sandbox · MCP aws-janitor (8000) → AWS
-```
+
+The gateway sits only between the agent and the LLM. Set `MODEL_PROVIDER=gateway` and bootstrap registers a custom OpenAI-compatible provider `gpt-model/openai`. The upstream model id is `TFY_GATEWAY_MODEL_ID`. `MODEL_PROVIDER=openai` calls OpenAI directly as `openai/janitor-model` (`OPENAI_MODEL_ID`).
 
 ## How TrueForge is used
-- **Agent loop & model:** the `cloud-cost-janitor` agent (spec in `agent/`) runs on TrueForge, registered by `scripts/bootstrap_trueforge.py` via TrueForge's HTTP API. The model provider is selectable via `MODEL_PROVIDER`: set it to `gateway` and the model runs through the **TrueFoundry AI Gateway**, registered as a custom OpenAI-compatible provider `gpt-model/openai` proxying to the gateway model id `vm-polaris/openai` (served by `gpt-4o-mini`). OpenAI-direct is kept as a fallback — `MODEL_PROVIDER=openai` (the default, unchanged from before) registers the model as `openai/janitor-model`, backed by the real OpenAI model id from `OPENAI_MODEL_ID` (`gpt-5.5` for our demo run).
-- **Tools:** our MCP server is attached as a remote connector; TrueForge calls the tools.
-- **Sandbox:** the agent writes and runs Python in TrueForge's Daytona sandbox to rank costs and produce `teardown-plan.md` / `.csv`.
-- **Human checkpoints:** TrueForge emits `tool.approval_required`; our bridge resumes the turn with `user.tool_approval` allow/deny decisions from the dashboard. The dashboard only submits decisions once the agent has paused for approval, and if a submit fails the approval cards stay on screen so you can resubmit. The same agent also works in TrueForge's own chat UI.
+
+- **UI and agent loop.** Chat, tool calls, and Allow/Deny happen in TrueForge. `scripts/bootstrap_trueforge.py` registers the model provider, the MCP server, the Daytona sandbox, and the agent from `agent/`.
+- **Model.** Each LLM call goes out through the configured provider. With the gateway, TrueForge never calls the model host directly.
+- **Tools.** TrueForge calls our MCP server. The model only chooses the next tool. The tool's code decides junk, blast radius, and tag refusal.
+- **Sandbox.** After the lists and prices are in, the agent writes a Python script. TrueForge runs that script on Daytona and the script writes `teardown-plan.md` and `teardown-plan.csv`. Deletes do not run in the sandbox.
+- **Human checkpoint.** Destructive tools raise `tool.approval_required`. In TrueForge's UI you Allow or Deny on the card. The optional dashboard posts the same decision to the API bridge.
 
 ## Real vs mocked
+
 | Real | Mocked / simulated |
 |---|---|
-| AWS resources created by `scripts/seed_aws.py` in a live account | Unit tests use `moto` (in-memory AWS) — no real calls |
-| Every MCP tool call against AWS during the demo | Prices come from a static us-east-1 table, not Cost Explorer or the Pricing API |
-| The sandbox Python run and plan files | "Idle" = state signals (unattached, stopped, zero targets, unassociated), not 14-day CloudWatch metrics |
-| Approved deletes (they really delete) | Snapshot age threshold is 0 days in the demo (`JANITOR_SNAPSHOT_MIN_AGE_DAYS`) so fresh seeds show up |
-| OpenAI model calls through TrueForge | The dry-run path is AWS's `DryRun` validation, not an executed delete |
+| AWS resources created by `scripts/seed_aws.py` | Unit tests use moto, not a live account |
+| MCP calls against that account during a demo | Prices are a static us-east-1 table, not Cost Explorer |
+| The Daytona script and the plan files | "Idle" is a state rule, not 14-day CloudWatch usage |
+| Approved deletes | `JANITOR_SNAPSHOT_MIN_AGE_DAYS=0` in the demo so a fresh snapshot is listed |
+| Model calls through the gateway (or OpenAI, if selected) | EC2 `DryRun` checks permission; it is not the delete |
 
 ## Known limits
-- One region per run, one account; no multi-account fan-out.
-- Static prices (us-east-1 list prices); other regions fall back to them.
-- Snapshot cost is an upper bound (full volume size; snapshots are incremental).
-- Audit log is in memory; restarting the API loses it.
-- Destructive actions only touch `janitor-demo=true` resources by design; running on real waste means changing `JANITOR_REQUIRE_TAG` deliberately.
-- The MCP server has no auth; it binds to 127.0.0.1 only. Tag and prod rails still apply to any caller.
 
-## Run it (≈10 minutes)
-Prereqs: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, an OpenAI key OR a TrueFoundry Gateway key, a Daytona key with `write:sandboxes`, `write:snapshots` and `delete:snapshots` (the default quick-start key is not enough).
-```bash
-cp .env.example .env                                  # fill in keys
-# once per AWS account, with ADMIN credentials (the least-privilege app user cannot create IAM roles):
-aws iam create-service-linked-role --aws-service-name elasticloadbalancing.amazonaws.com
-aws iam create-user --user-name cost-janitor && aws iam put-user-policy --user-name cost-janitor --policy-name cloud-cost-janitor --policy-document file://scripts/iam-policy.json
-aws iam create-access-key --user-name cost-janitor   # put these keys in .env
-# The admin-only IAM step above uses your admin AWS profile; the app itself only ever
-# reads the cost-janitor keys from .env.
+- One region and one account per run.
+- Other regions reuse the us-east-1 price table. Snapshot price is the full volume size, an upper bound.
+- The API audit log is in memory.
+- Deletes touch `janitor-demo=true` resources. Clearing `JANITOR_REQUIRE_TAG` is a deliberate choice.
+- The MCP server binds to `127.0.0.1` and has no auth of its own. The tag rails still apply.
+
+## Run it
+
+Prerequisites: Node ≥ 22.14, Python ≥ 3.11, an AWS account with a default VPC, a Daytona key with `write:sandboxes`, `write:snapshots`, and `delete:snapshots`, and either a TrueFoundry gateway key (`MODEL_PROVIDER=gateway`) or an OpenAI key (`MODEL_PROVIDER=openai`).
+
+Four processes stay running. Bootstrap and seed run once and exit.
+
+```powershell
+cd "C:\Users\Harsh Kumar\OneDrive\Documents\True_Foundry_Hackathon"
+copy .env.example .env
+# fill keys in .env — never commit .env
+
 python -m venv .venv
-source .venv/Scripts/activate                         # Git Bash · PowerShell: .venv\Scripts\Activate.ps1 · macOS/Linux: source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-
-# Terminal 1 (new terminal, repo root) → http://localhost:8790 (TrueForge blocks localhost MCP URLs unless allowed):
-OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]' npx @truefoundry/trueforge@0.2.1
-#   PowerShell: $env:OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]'; npx @truefoundry/trueforge@0.2.1
-
-# Terminal 2 (new terminal, repo root, venv activated) → http://localhost:8000/mcp
-python -m mcp_server.server
-
-# Terminal 3 (new terminal, repo root, venv activated): register the agent and seed demo
-# waste first, then start the API bridge in the same terminal once they finish
-python -m scripts.bootstrap_trueforge                  # registers model, MCP server, sandbox, agent
-python -m scripts.seed_aws                             # creates tagged demo waste (a few minutes)
-uvicorn api.main:app --port 8080
-
-# Terminal 4 (new terminal, repo root, venv activated) → http://localhost:5173
-cd web && npm install && npm run dev
 ```
-Click **Run janitor** → watch the steps → approve / deny → read the report. Or open http://localhost:8790,
-pick the `cloud-cost-janitor` agent, and ask it to clean up us-east-1.
-Afterwards: `python -m scripts.cleanup_aws`.
 
-Tests (no AWS needed): `pytest` and `cd web && npm test`.
+Once per account, with admin credentials (the `cost-janitor` user cannot create IAM roles):
 
-## AI assistants used
-Claude Code (Anthropic) helped with planning and implementation. The team reviewed every line and can walk through the architecture.
+```powershell
+aws iam create-service-linked-role --aws-service-name elasticloadbalancing.amazonaws.com
+aws iam create-user --user-name cost-janitor
+aws iam put-user-policy --user-name cost-janitor --policy-name cloud-cost-janitor --policy-document file://scripts/iam-policy.json
+aws iam create-access-key --user-name cost-janitor
+```
+
+Terminal 1 — TrueForge. Leave it open.
+
+```powershell
+$env:OUTBOUND_URL_ALLOWED_HOSTS='["localhost","127.0.0.1"]'
+npx @truefoundry/trueforge@0.2.1
+```
+
+Terminal 2 — MCP server. Leave it open.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m mcp_server.server
+```
+
+Terminal 3 — register the agent, then create demo waste. Both commands exit when they finish.
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m scripts.bootstrap_trueforge
+python -m scripts.seed_aws
+```
+
+Open `http://localhost:8790`, choose the agent `cloud-cost-janitor`, and ask it to clean up `us-east-1`. Approve some deletes and deny one. Afterwards:
+
+```powershell
+python -m scripts.cleanup_aws
+```
+
+Optional dashboard, two more terminals:
+
+```powershell
+uvicorn api.main:app --port 8080
+cd web; npm install; npm run dev
+```
+
+Then use `http://localhost:5173` and click **Run janitor**. Tests without AWS: `pytest` and `cd web; npm test`.
 
 ## Next steps
-Multi-region fan-out, Cost Explorer-backed pricing, weekly runs via TrueForge Schedules, Slack approvals.
+
+Multi-region fan-out, Cost Explorer prices, weekly runs via TrueForge Schedules, Slack approvals.
