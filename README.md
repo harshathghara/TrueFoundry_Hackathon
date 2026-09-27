@@ -2,6 +2,8 @@
 
 An agent that **acts**: it finds idle AWS resources, prices them, writes a teardown plan, and deletes **only what a human approves**. Built on [TrueForge](https://github.com/truefoundry/trueforge) for the *Agents That Act* hackathon (TrueFoundry × Polaris). MIT licensed.
 
+![cloud-cost-janitor agent in TrueForge](image.png)
+
 ## The problem
 
 Cloud accounts collect waste: unattached EBS volumes, stopped instances that still pay for disks, load balancers with no targets, idle Elastic IPs, and stale snapshots. Finding them, pricing them, and removing them is recurring toil — as long as nothing is deleted without a sign-off.
